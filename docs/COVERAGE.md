@@ -2,13 +2,13 @@
 
 QuietGuard is a clean-room Windows PUP/system-change monitor. It does not copy Malware Zero code or databases.
 
-## Implemented through v0.11
+## Implemented through 1.0
 
 ### Manual system inspection
 
-- Hosts, Windows proxy and explicit IPv4 DNS configuration
-- HKCU/HKLM Run and RunOnce, WOW6432Node Run, Startup folders
-- Command Processor AutoRun, Winlogon, AppInit DLLs and Active Setup StubPath
+- Hosts, Windows user proxy/PAC, WinHTTP proxy and explicit IPv4 DNS configuration
+- HKCU/HKLM Run and RunOnce, WOW6432Node Run, Explorer Policies Run and Startup folders
+- Command Processor AutoRun, Winlogon, AppInit DLLs, AppCertDlls and Active Setup StubPath
 - Service ImagePath, ServiceDll and Start/Type/ImagePath combination heuristics
 - Scheduled tasks, IFEO Debugger, BITS, Winsock and WMI permanent event consumers
 - User/system environment variables and UserInitMprLogonScript
@@ -27,11 +27,18 @@ QuietGuard is a clean-room Windows PUP/system-change monitor. It does not copy M
 - Firefox extensions.json metadata, active signature-state hints and external sourceURI checks
 - Chrome/Edge allowed notification origin details
 - Authenticode status and signer subject for selected suspicious autorun/service file candidates
+- Windows Firewall rule executable-path heuristics
+- Explorer DisallowRun/RestrictRun execution-policy inspection
+- Software Restriction Policy (`Safer`) suspicious path/command inspection
+- SafeBoot suspicious path/command inspection
+- MozillaPlugins registration inspection
+- IE SearchScopes and DOMStorage review points
+- Local IPsec policy suspicious path/command inspection
 
 ### Baseline/change comparison
 
 - Manual accepted-state snapshot under `%LOCALAPPDATA%\QuietGuard\baseline.txt`
-- Added/removed scan-result comparison
+- Added/removed scan-result comparison across all current manual checks
 - Recent real-time event viewer in the GUI
 
 ### Rule/update infrastructure
@@ -39,22 +46,42 @@ QuietGuard is a clean-room Windows PUP/system-change monitor. It does not copy M
 - External heuristic rule file with built-in fallback rules
 - Per-user rule database under `%LOCALAPPDATA%\QuietGuard\rules`
 - HTTPS GitHub retrieval with SHA-256 manifest verification
+- Installed-rule SHA-256 revalidation even when the version string is unchanged
+- Minimum compatible application version enforcement from the manifest
+- Hidden background rule check at GUI startup
+- Background update result log under `%LOCALAPPDATA%\QuietGuard\update.log`
 - Portable Windows CI artifact containing executable and starter rules
 
 ### Low-memory real-time watcher
 
-Native registry notifications cover available important locations including Run/RunOnce, proxy, Command Processor, Winlogon, Services/drivers and Chrome/Edge policy keys. Low-frequency metadata checks cover Hosts, Startup folders and the Windows scheduled-task store.
+Native registry notifications cover available important locations including:
 
-Events are written to `%LOCALAPPDATA%\QuietGuard\events.log`. The watcher records changes only and does not modify the system.
+- HKCU/HKLM Run and RunOnce
+- Windows proxy/PAC settings
+- HKCU/HKLM Command Processor
+- Winlogon
+- Services/drivers subtree
+- SafeBoot
+- Windows Firewall rules
+- HKCU/HKLM App Paths
+- HKCU/HKLM Explorer Policies
+- Software Restriction Policy
+- IE SearchScopes
+- HKCU/HKLM MozillaPlugins
+- Chrome/Edge user and system policy keys
 
-## Remaining high-value targets
+Low-frequency metadata checks cover Hosts, Startup folders and the Windows scheduled-task store. Events are written to `%LOCALAPPDATA%\QuietGuard\events.log`. The watcher records changes only and does not modify the system.
+
+## Remaining hardening targets
+
+These are post-1.0 enhancements rather than blockers for the current read-only prototype:
 
 - Winsock/LSP provider baseline and allowlisting
 - More detailed DNS/proxy reputation intelligence using legally reusable public data
 - More precise service/driver publisher/path scoring
 - File/hash/PUP publisher intelligence where licensing permits
 - Safe quarantine/restore with explicit user approval and rollback metadata
-- Cryptographically signed rule/database update channel
-- Stable settings/log retention and release packaging
+- Independent cryptographic signing for the rule/database update channel
+- Stable settings/log retention and installer/release packaging
 
 The goal is broad functional overlap with the Windows inspection surfaces Malware Zero covers, plus low-memory real-time monitoring, without copying Malware Zero's proprietary signatures or databases.
