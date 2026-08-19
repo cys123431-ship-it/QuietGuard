@@ -27,6 +27,8 @@ mod intel;
 #[cfg(target_os = "windows")]
 mod keyed_intel;
 #[cfg(target_os = "windows")]
+mod clam_bridge;
+#[cfg(target_os = "windows")]
 mod data_update;
 #[cfg(target_os = "windows")]
 mod monitor;
@@ -134,9 +136,7 @@ mod app {
         fn GetModuleHandleW(lpModuleName: LPCWSTR) -> HINSTANCE;
     }
 
-    fn wide(s: &str) -> Vec<u16> {
-        s.encode_utf16().chain(std::iter::once(0)).collect()
-    }
+    fn wide(s: &str) -> Vec<u16> { s.encode_utf16().chain(std::iter::once(0)).collect() }
 
     unsafe fn add_line(text: &str) {
         let w = wide(text);
@@ -158,6 +158,7 @@ mod app {
         lines.extend(crate::scanner_extra6::run_extra_scan6());
         lines.extend(crate::scanner_extra7::run_extra_scan7());
         lines.extend(crate::scanner_extra8::run_extra_scan8());
+        lines.extend(crate::clam_bridge::scan_candidates());
         show_lines(lines);
     }
 
@@ -189,10 +190,8 @@ mod app {
     unsafe fn make_button(hwnd: HWND, instance: HINSTANCE, x: i32, y: i32, width: i32, id: usize, text: &str) {
         let class = wide("BUTTON");
         let caption = wide(text);
-        CreateWindowExW(
-            0, class.as_ptr(), caption.as_ptr(), WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-            x, y, width, 34, hwnd, id as HMENU, instance, null_mut()
-        );
+        CreateWindowExW(0, class.as_ptr(), caption.as_ptr(), WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+            x, y, width, 34, hwnd, id as HMENU, instance, null_mut());
     }
 
     pub fn run() {
@@ -200,25 +199,15 @@ mod app {
             let instance = GetModuleHandleW(null());
             let class_name = wide("QuietGuardNativeWindow");
             let wc = WNDCLASSW {
-                style: 0,
-                lpfn_wnd_proc: Some(wnd_proc),
-                cb_cls_extra: 0,
-                cb_wnd_extra: 0,
-                h_instance: instance,
-                h_icon: null_mut(),
-                h_cursor: LoadCursorW(null_mut(), IDC_ARROW),
-                hbr_background: (COLOR_WINDOW + 1) as HBRUSH,
-                lpsz_menu_name: null(),
-                lpsz_class_name: class_name.as_ptr(),
+                style: 0, lpfn_wnd_proc: Some(wnd_proc), cb_cls_extra: 0, cb_wnd_extra: 0,
+                h_instance: instance, h_icon: null_mut(), h_cursor: LoadCursorW(null_mut(), IDC_ARROW),
+                hbr_background: (COLOR_WINDOW + 1) as HBRUSH, lpsz_menu_name: null(), lpsz_class_name: class_name.as_ptr(),
             };
             if RegisterClassW(&wc) == 0 { return; }
 
             let title = wide("QuietGuard - PUP / 시스템 변경 점검");
-            let hwnd = CreateWindowExW(
-                0, class_name.as_ptr(), title.as_ptr(), WS_OVERLAPPEDWINDOW | WS_VISIBLE,
-                CW_USEDEFAULT, CW_USEDEFAULT, 1040, 660,
-                null_mut(), null_mut(), instance, null_mut()
-            );
+            let hwnd = CreateWindowExW(0, class_name.as_ptr(), title.as_ptr(), WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+                CW_USEDEFAULT, CW_USEDEFAULT, 1040, 660, null_mut(), null_mut(), instance, null_mut());
             if hwnd.is_null() { return; }
 
             make_button(hwnd, instance, 20, 18, 130, ID_SCAN, "시스템 점검");
@@ -230,16 +219,15 @@ mod app {
             make_button(hwnd, instance, 160, 62, 130, ID_BASELINE_COMPARE, "기준 비교");
 
             let listbox = wide("LISTBOX");
-            LISTBOX = CreateWindowExW(
-                0, listbox.as_ptr(), null(),
+            LISTBOX = CreateWindowExW(0, listbox.as_ptr(), null(),
                 WS_CHILD | WS_VISIBLE | WS_BORDER | WS_VSCROLL | LBS_NOINTEGRALHEIGHT,
-                20, 112, 980, 490, hwnd, null_mut(), instance, null_mut()
-            );
+                20, 112, 980, 490, hwnd, null_mut(), instance, null_mut());
 
             add_line("QuietGuard 준비됨 - 시스템 점검, DB 업데이트, 실시간 감시와 기준 비교를 사용할 수 있습니다.");
             add_line("Defender를 대체하지 않으며 PUP/광고프로그램/하이재킹 및 시스템 변조 흔적에 집중합니다.");
             add_line("공개 PUP/애드웨어 도메인 DB는 상주 메모리에 적재하지 않고 디스크 인덱스로 조회합니다.");
             add_line(&crate::keyed_intel::abusech_config_status());
+            add_line(&crate::clam_bridge::status_line());
             add_line(if crate::monitor::is_running() { "실시간 감시 상태: 실행 중" } else { "실시간 감시 상태: 중지됨" });
             ShowWindow(hwnd, SW_SHOW);
             UpdateWindow(hwnd);
