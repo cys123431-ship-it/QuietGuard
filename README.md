@@ -9,35 +9,34 @@ QuietGuard is a low-memory Windows companion to Microsoft Defender focused on PU
 - Read-only detection first. No automatic deletion until restore/quarantine and false-positive handling are mature
 - Clean-room implementation: Malware Zero is used only as a reference for categories of Windows state worth inspecting; its code and databases are not copied
 
-## Current 0.6 manual checks
+## Current 0.7 manual checks
 
 QuietGuard inspects Hosts, proxy, explicit DNS configuration, Run/RunOnce and other registry persistence locations, Startup folders, service ImagePath and ServiceDll values, scheduled tasks, IFEO Debugger entries, BITS jobs, Winsock catalog output, WMI permanent event consumers, Chrome/Edge/Firefox extension inventory, browser force-install extension policies, browser home/search/startup policy overrides, environment/logon-script persistence, file/URL shell-open associations, uninstall commands, browser shortcut arguments and IE ElevationPolicy entries.
 
-See `docs/COVERAGE.md` for the detailed coverage list.
+## Baseline comparison
+
+Version 0.7 adds two manual actions:
+
+- **기준 저장**: saves a normalized snapshot of the current QuietGuard scan results under `%LOCALAPPDATA%\QuietGuard\baseline.txt`.
+- **기준 비교**: rescans and shows newly added or removed/changed findings compared with that snapshot.
+
+Only save a baseline after the current PC state has been reviewed as acceptable. The baseline is a change-detection aid, not a declaration that every saved item is trustworthy.
 
 ## Low-memory real-time watcher
 
-Version 0.6 adds a background `--watch` mode controlled from the native GUI.
+The background `--watch` mode uses Windows registry change notifications and a single `WaitForMultipleObjects` loop instead of repeatedly rescanning the whole PC or creating one worker thread per target. It watches important Run/RunOnce entries, proxy configuration, Command Processor AutoRun locations, Winlogon, the Services/driver registry tree, available Chrome/Edge policy keys, Hosts, Startup folders and the Windows scheduled-task store.
 
-The watcher uses Windows registry change notifications and a single `WaitForMultipleObjects` loop instead of repeatedly rescanning the whole PC or creating one worker thread per target. It currently watches important Run/RunOnce entries, proxy configuration, Command Processor AutoRun locations, Winlogon, the Services/driver registry tree, available Chrome/Edge policy keys, Hosts, Startup folders and the Windows scheduled-task store.
-
-Changes are logged under:
-
-```text
-%LOCALAPPDATA%\QuietGuard\events.log
-```
-
-This version records changes but does not automatically block or delete them.
+Changes are logged under `%LOCALAPPDATA%\QuietGuard\events.log`. The GUI **감시 로그** action shows the recent entries.
 
 ## Rule database updates
 
-`rules/heuristics.conf` contains lightweight extendable heuristics. The GUI includes a **Rule Update** action.
+`rules/heuristics.conf` contains lightweight extendable heuristics. The GUI includes a **규칙 업데이트** action.
 
 - The update manifest and rule file are downloaded from this GitHub repository over HTTPS.
 - The downloaded rule file is accepted only when its SHA-256 matches `rules/version.json`.
 - Updated rules are stored under `%LOCALAPPDATA%\QuietGuard\rules`, so administrator rights are not required.
-- The per-user updated rules take priority over the portable/bundled rules next to the executable.
-- If no external rule file exists, QuietGuard keeps safe built-in defaults.
+- Per-user updated rules take priority over portable/bundled rules.
+- Safe built-in defaults remain available if no external rule file exists.
 
 The current channel provides integrity checking, not a separate cryptographic publisher signature. A signed update channel remains a later hardening target.
 
@@ -51,7 +50,7 @@ The project avoids heavy GUI/runtime frameworks. Manual checks may briefly launc
 cargo build --release
 ```
 
-GitHub Actions builds a portable Windows package on every push to `main`. The artifact contains `QuietGuard.exe` plus the starter `rules` directory.
+GitHub Actions builds a portable Windows package. v0.7 was validated through a pull-request Windows Actions run where `cargo check --release`, `cargo build --release`, packaging and artifact upload all succeeded.
 
 ## Status
 
