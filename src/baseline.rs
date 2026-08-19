@@ -93,6 +93,7 @@ fn collect_scan_lines() -> Vec<String> {
     all.extend(crate::scanner_extra2::run_extra_scan2());
     all.extend(crate::scanner_extra3::run_extra_scan3());
     all.extend(crate::scanner_extra4::run_extra_scan4());
+    all.extend(crate::scanner_extra5::run_extra_scan5());
     all
 }
 
@@ -100,7 +101,7 @@ fn normalize(lines: &[String]) -> BTreeSet<String> {
     lines.iter()
         .map(|s| s.trim())
         .filter(|s| !s.is_empty())
-        .filter(|s| !s.starts_with("QuietGuard 0."))
+        .filter(|s| !s.starts_with("QuietGuard "))
         .filter(|s| !s.starts_with("점검 완료"))
         .filter(|s| !s.starts_with("---"))
         .map(ToOwned::to_owned)
