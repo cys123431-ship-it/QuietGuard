@@ -19,7 +19,13 @@ mod scanner_extra6;
 #[cfg(target_os = "windows")]
 mod scanner_extra7;
 #[cfg(target_os = "windows")]
+mod scanner_extra8;
+#[cfg(target_os = "windows")]
 mod updater;
+#[cfg(target_os = "windows")]
+mod intel;
+#[cfg(target_os = "windows")]
+mod data_update;
 #[cfg(target_os = "windows")]
 mod monitor;
 #[cfg(target_os = "windows")]
@@ -80,7 +86,7 @@ mod app {
     const WS_VISIBLE: DWORD = 0x10000000;
     const WS_CHILD: DWORD = 0x40000000;
     const WS_BORDER: DWORD = 0x00800000;
-    const BS_PUSHBUTTON: DWORD = 0x00000000;
+    const BS_PUSHBUTTON: DWORD = 0;
     const LBS_NOINTEGRALHEIGHT: DWORD = 0x0100;
     const WS_VSCROLL: DWORD = 0x00200000;
     const CW_USEDEFAULT: i32 = 0x80000000u32 as i32;
@@ -91,6 +97,7 @@ mod app {
     const LB_RESETCONTENT: UINT = 0x0184;
     const COLOR_WINDOW: isize = 5;
     const IDC_ARROW: LPCWSTR = 32512usize as LPCWSTR;
+
     const ID_SCAN: usize = 1001;
     const ID_UPDATE: usize = 1002;
     const ID_WATCH_START: usize = 1003;
@@ -136,9 +143,7 @@ mod app {
 
     unsafe fn show_lines(lines: Vec<String>) {
         SendMessageW(LISTBOX, LB_RESETCONTENT, 0, 0);
-        for line in lines {
-            add_line(&line);
-        }
+        for line in lines { add_line(&line); }
     }
 
     unsafe fn run_scan() {
@@ -150,64 +155,40 @@ mod app {
         lines.extend(crate::scanner_extra5::run_extra_scan5());
         lines.extend(crate::scanner_extra6::run_extra_scan6());
         lines.extend(crate::scanner_extra7::run_extra_scan7());
+        lines.extend(crate::scanner_extra8::run_extra_scan8());
         show_lines(lines);
     }
 
-    unsafe fn run_rule_update() {
-        show_lines(crate::updater::update_rules());
-    }
-
-    unsafe fn start_watch() {
-        show_lines(vec![
-            crate::monitor::start_background(),
-            "변경 이벤트는 %LOCALAPPDATA%\\QuietGuard\\events.log 에 기록됩니다.".into(),
-        ]);
-    }
-
-    unsafe fn stop_watch() {
-        show_lines(vec![crate::monitor::request_stop()]);
-    }
-
-    unsafe fn show_watch_log() {
-        show_lines(crate::baseline::recent_events(120));
-    }
-
-    unsafe fn save_baseline() {
-        show_lines(crate::baseline::save_baseline());
-    }
-
-    unsafe fn compare_baseline() {
-        show_lines(crate::baseline::compare_baseline());
+    unsafe fn wnd_action(id: usize) {
+        match id {
+            ID_SCAN => run_scan(),
+            ID_UPDATE => show_lines(crate::data_update::update_all(true)),
+            ID_WATCH_START => show_lines(vec![
+                crate::monitor::start_background(),
+                "변경 이벤트는 %LOCALAPPDATA%\\QuietGuard\\events.log 에 기록됩니다.".into(),
+            ]),
+            ID_WATCH_STOP => show_lines(vec![crate::monitor::request_stop()]),
+            ID_LOG => show_lines(crate::baseline::recent_events(120)),
+            ID_BASELINE_SAVE => show_lines(crate::baseline::save_baseline()),
+            ID_BASELINE_COMPARE => show_lines(crate::baseline::compare_baseline()),
+            _ => {}
+        }
     }
 
     unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         match msg {
-            WM_COMMAND => {
-                match wparam & 0xFFFF {
-                    ID_SCAN => { run_scan(); return 0; }
-                    ID_UPDATE => { run_rule_update(); return 0; }
-                    ID_WATCH_START => { start_watch(); return 0; }
-                    ID_WATCH_STOP => { stop_watch(); return 0; }
-                    ID_LOG => { show_watch_log(); return 0; }
-                    ID_BASELINE_SAVE => { save_baseline(); return 0; }
-                    ID_BASELINE_COMPARE => { compare_baseline(); return 0; }
-                    _ => {}
-                }
-            }
-            WM_DESTROY => {
-                PostQuitMessage(0);
-                return 0;
-            }
+            WM_COMMAND => { wnd_action(wparam & 0xFFFF); return 0; }
+            WM_DESTROY => { PostQuitMessage(0); return 0; }
             _ => {}
         }
         DefWindowProcW(hwnd, msg, wparam, lparam)
     }
 
     unsafe fn make_button(hwnd: HWND, instance: HINSTANCE, x: i32, y: i32, width: i32, id: usize, text: &str) {
-        let button = wide("BUTTON");
+        let class = wide("BUTTON");
         let caption = wide(text);
         CreateWindowExW(
-            0, button.as_ptr(), caption.as_ptr(), WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+            0, class.as_ptr(), caption.as_ptr(), WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
             x, y, width, 34, hwnd, id as HMENU, instance, null_mut()
         );
     }
@@ -239,7 +220,7 @@ mod app {
             if hwnd.is_null() { return; }
 
             make_button(hwnd, instance, 20, 18, 130, ID_SCAN, "시스템 점검");
-            make_button(hwnd, instance, 160, 18, 130, ID_UPDATE, "규칙 업데이트");
+            make_button(hwnd, instance, 160, 18, 130, ID_UPDATE, "DB 업데이트");
             make_button(hwnd, instance, 300, 18, 145, ID_WATCH_START, "실시간 감시 시작");
             make_button(hwnd, instance, 455, 18, 145, ID_WATCH_STOP, "실시간 감시 중지");
             make_button(hwnd, instance, 610, 18, 130, ID_LOG, "감시 로그");
@@ -253,17 +234,13 @@ mod app {
                 20, 112, 980, 490, hwnd, null_mut(), instance, null_mut()
             );
 
-            add_line("QuietGuard 준비됨 - 수동 점검, 규칙 업데이트, 실시간 감시와 기준 비교를 사용할 수 있습니다.");
+            add_line("QuietGuard 준비됨 - 시스템 점검, DB 업데이트, 실시간 감시와 기준 비교를 사용할 수 있습니다.");
             add_line("Defender를 대체하지 않으며 PUP/광고프로그램/하이재킹 및 시스템 변조 흔적에 집중합니다.");
-            add_line("'기준 저장'은 현재 상태가 정상임을 확인한 뒤 사용하세요.");
-            add_line(if crate::monitor::is_running() {
-                "실시간 감시 상태: 실행 중"
-            } else {
-                "실시간 감시 상태: 중지됨"
-            });
+            add_line("공개 PUP/애드웨어 도메인 DB는 상주 메모리에 적재하지 않고 디스크 인덱스로 조회합니다.");
+            add_line(if crate::monitor::is_running() { "실시간 감시 상태: 실행 중" } else { "실시간 감시 상태: 중지됨" });
             ShowWindow(hwnd, SW_SHOW);
             UpdateWindow(hwnd);
-            add_line(&crate::updater::spawn_background_update());
+            add_line(&crate::data_update::spawn_background_update());
 
             let mut msg: MSG = zeroed();
             while GetMessageW(&mut msg, null_mut(), 0, 0) > 0 {
@@ -276,10 +253,11 @@ mod app {
 
 #[cfg(target_os = "windows")]
 fn main() {
-    if std::env::args().any(|arg| arg == "--watch") {
+    let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|arg| arg == "--watch") {
         monitor::run_watcher();
-    } else if std::env::args().any(|arg| arg == "--update-rules-silent") {
-        updater::update_rules_silent();
+    } else if args.iter().any(|arg| arg == "--update-data-silent" || arg == "--update-rules-silent") {
+        data_update::update_silent();
     } else {
         app::run();
     }
