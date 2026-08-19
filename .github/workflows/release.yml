@@ -1,0 +1,73 @@
+name: release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/release.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release-v1-4-0:
+    runs-on: windows-latest
+    env:
+      RELEASE_TAG: v1.4.0
+      RELEASE_TARGET: f77b9a3bc8cf8ae43902b8880e42c3cc3f233d08
+    steps:
+      - name: Checkout release target
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TARGET }}
+          fetch-depth: 0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Validate
+        run: cargo check --release
+
+      - name: Build
+        run: cargo build --release
+
+      - name: Prepare release package
+        shell: pwsh
+        run: |
+          $dir = 'dist/QuietGuard-v1.4.0-windows-x64'
+          New-Item -ItemType Directory -Force -Path "$dir/rules" | Out-Null
+          Copy-Item target/release/quietguard.exe "$dir/QuietGuard.exe"
+          Copy-Item rules/heuristics.conf "$dir/rules/heuristics.conf"
+          Copy-Item rules/version.json "$dir/rules/version.json"
+          Compress-Archive -Path "$dir/*" -DestinationPath 'dist/QuietGuard-v1.4.0-windows-x64.zip' -Force
+          (Get-FileHash 'dist/QuietGuard-v1.4.0-windows-x64.zip' -Algorithm SHA256).Hash.ToLower() | Set-Content 'dist/QuietGuard-v1.4.0-windows-x64.zip.sha256'
+
+      - name: Create GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $notes = @"
+          QuietGuard v1.4.0
+
+          Low-memory Windows companion to Microsoft Defender focused on PUP/PUA, adware/browser hijacking, unwanted persistence and suspicious system configuration changes.
+
+          Highlights:
+          - Native Rust/Win32 GUI and low-memory watcher
+          - Automatic no-key public intelligence updates
+          - UncheckyAds, FadeMind add.Risk, KADhosts, StevenBlack and YousList context
+          - Optional ThreatFox/URLhaus caches when an abuse.ch Auth-Key is configured
+          - Optional ClamAV PUA bridge when ClamAV is already installed
+          - Optional Google Safe Browsing checks, disabled by default for privacy
+          - Read-only detection; no automatic deletion or quarantine
+
+          SHA-256 is attached alongside the Windows x64 ZIP.
+          "@
+
+          gh release view $env:RELEASE_TAG *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $env:RELEASE_TAG 'dist/QuietGuard-v1.4.0-windows-x64.zip' 'dist/QuietGuard-v1.4.0-windows-x64.zip.sha256' --clobber
+          } else {
+            gh release create $env:RELEASE_TAG 'dist/QuietGuard-v1.4.0-windows-x64.zip' 'dist/QuietGuard-v1.4.0-windows-x64.zip.sha256' --target $env:RELEASE_TARGET --title 'QuietGuard v1.4.0' --notes $notes
+          }
