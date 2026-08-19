@@ -8,12 +8,15 @@
 4. v0.4 - environment/logon-script, shell-open association, uninstall, browser shortcut and IE ElevationPolicy checks
 5. v0.5 - per-user GitHub rule/database updater with SHA-256 verification and portable CI package
 6. v0.6 - low-memory native background watcher for important persistence/configuration changes
+7. v0.7 - accepted-state baseline comparison and GUI watcher-log viewer
+8. v0.8 - Active Setup, per-user COM, hidden-file and browser notification coverage
+9. v0.9 - fake-system-process, numeric System32 file, Group Policy Registry.pol and Chromium extension metadata checks
 
 ## Next
 
-7. v0.7 - baseline snapshots, event-log viewer and richer PUP naming/publisher/hash intelligence
-8. v0.8 - reputation-feed plumbing using free/public sources where licensing and rate limits allow
-9. v0.9 - safe quarantine/restore with explicit user approval
-10. v1.0 - deeper COM/CLSID/TypeLib coverage, signed update channel and release hardening
+10. v0.10 - focused service/driver anomaly analysis, Firefox extension metadata and richer browser notification details
+11. v0.11 - code-signature/publisher metadata for suspicious findings and targeted reputation plumbing
+12. v0.12 - safe quarantine/restore with explicit user approval and rollback metadata
+13. v1.0 - signed rule/update channel, settings/log hardening and stable release packaging
 
 The project remains read-only until restore and false-positive handling are mature enough to make remediation safe.
