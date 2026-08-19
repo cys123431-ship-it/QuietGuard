@@ -48,6 +48,8 @@ The background `--watch` mode uses native `RegNotifyChangeKeyValue` notification
 
 It watches Run/RunOnce, proxy/PAC, Command Processor, Winlogon, Services/drivers, SafeBoot, Windows Firewall rules, App Paths, Explorer execution policies, Software Restriction Policy, IE SearchScopes, MozillaPlugins and available Chrome/Edge policy keys. Low-frequency metadata checks cover Hosts, Startup folders and the Windows scheduled-task store. Changes are written to `%LOCALAPPDATA%\QuietGuard\events.log` and can be viewed from the GUI.
 
+The watcher does not perform network updates; update checks are spawned only from the GUI process so the always-on watcher remains small and event-driven.
+
 ## Rule database updates
 
 `rules/heuristics.conf` is an extendable lightweight rule database. The GUI includes a manual **규칙 업데이트** action, and QuietGuard also starts a hidden update check when the GUI opens.
