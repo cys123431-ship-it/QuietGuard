@@ -1,42 +1,32 @@
 # QuietGuard
 
-QuietGuard is a low-memory Windows utility focused on PUP/PUA-style annoyances and suspicious system changes that can coexist with Microsoft Defender.
+QuietGuard is a low-memory Windows companion to Microsoft Defender focused on PUP/PUA, unwanted persistence and system/browser configuration changes rather than traditional antivirus replacement.
 
 ## Design goals
 
-- Rust + native Win32 UI; no Electron, Python runtime, .NET/WPF, or embedded browser.
-- Read-only detection first. No automatic deletion/blocking in v0.1.
-- Complement Defender rather than replace antivirus protection.
-- Keep background memory usage low.
-- Separate executable updates from rules/database updates.
+- Rust + native Win32 GUI; no Electron, Python runtime or .NET desktop runtime
+- Keep the always-on component small; the GUI should only exist while the user opens it
+- Read-only detection first. No automatic deletion until restore/quarantine and false-positive handling are mature
+- Clean-room implementation: Malware Zero is used only as a reference for categories of Windows state worth inspecting; its code and databases are not copied
 
-## v0.1 checks
+## Current 0.2 checks
 
-- Hosts file custom entries
-- Windows proxy enabled state
-- Current-user startup entries
-- Startup entries launching from temporary paths
+Hosts, proxy, explicit DNS configuration, Run/RunOnce and other registry persistence locations, Startup folders, service ImagePath values, scheduled tasks, Chrome/Edge/Firefox extension inventory, and browser force-install extension policies.
 
-## Planned architecture
+See `docs/COVERAGE.md` for the detailed roadmap.
 
-- `quietguard-service.exe`: minimal background monitor, always-on.
-- `quietguard.exe`: GUI launched only when the user opens it.
-- `rules/`: independently updateable detection rules.
+## Rules
 
-## Build on Windows
+`rules/heuristics.conf` contains simple extendable heuristics. The executable has safe built-in defaults, so it still runs if the external file is absent.
 
-Install the stable Rust toolchain with MSVC support, then run:
+## Build
 
-```powershell
+```text
 cargo build --release
 ```
 
-Output:
+GitHub Actions also builds the Windows executable on every push to `main`.
 
-```text
-target\release\quietguard.exe
-```
+## Status
 
-## Safety
-
-This prototype reports findings only. It does not delete files, edit the registry, or disable services.
+Early prototype. Findings are advisory and may include legitimate administrator/user configurations. QuietGuard does not currently delete, quarantine or block anything.
