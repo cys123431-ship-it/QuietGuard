@@ -6,6 +6,8 @@ mod rules;
 mod scanner;
 #[cfg(target_os = "windows")]
 mod scanner_extra;
+#[cfg(target_os = "windows")]
+mod scanner_extra2;
 
 #[cfg(not(target_os = "windows"))]
 fn main() {
@@ -118,6 +120,9 @@ mod app {
         for line in crate::scanner_extra::run_extra_scan() {
             add_line(&line);
         }
+        for line in crate::scanner_extra2::run_extra_scan2() {
+            add_line(&line);
+        }
     }
 
     unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
@@ -155,7 +160,7 @@ mod app {
             };
             if RegisterClassW(&wc) == 0 { return; }
 
-            let title = wide("QuietGuard 0.3 - PUP / 시스템 변경 점검");
+            let title = wide("QuietGuard 0.4 - PUP / 시스템 변경 점검");
             let hwnd = CreateWindowExW(
                 0, class_name.as_ptr(), title.as_ptr(), WS_OVERLAPPEDWINDOW | WS_VISIBLE,
                 CW_USEDEFAULT, CW_USEDEFAULT, 900, 590,
