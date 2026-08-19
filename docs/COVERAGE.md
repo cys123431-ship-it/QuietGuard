@@ -2,12 +2,12 @@
 
 QuietGuard is a clean-room Windows PUP/system-change monitor. It does not copy Malware Zero code or databases.
 
-## Implemented through 0.9
+## Implemented through 1.0
 
 ### Manual system inspection
 
 - Hosts custom-entry inspection
-- Windows proxy state and explicit IPv4 DNS configuration
+- Windows user proxy/PAC, WinHTTP proxy and explicit IPv4 DNS configuration
 - HKCU/HKLM Run and RunOnce, WOW6432Node Run
 - Command Processor AutoRun
 - Winlogon Shell/Userinit/Notify
@@ -36,11 +36,19 @@ QuietGuard is a clean-room Windows PUP/system-change monitor. It does not copy M
 - 4/12-digit executable-like files in System32/SysWOW64
 - Group Policy Registry.pol suspicious command/path strings
 - Chromium extension ID validation, background declaration counts and external update_url inspection
+- Windows Firewall rule executable-path heuristics
+- Explorer DisallowRun/RestrictRun policy inspection
+- Software Restriction Policy (`Safer`) suspicious path/command inspection
+- SafeBoot suspicious path/command inspection
+- App Paths registration inspection
+- MozillaPlugins registration inspection
+- IE SearchScopes and DOMStorage review points
+- Local IPsec/policy suspicious path/command inspection
 
 ### Baseline/change comparison
 
 - Manual accepted-state snapshot under `%LOCALAPPDATA%\QuietGuard\baseline.txt`
-- Added/removed scan-result comparison
+- Added/removed scan-result comparison across all current manual checks
 - Recent real-time event viewer in the GUI
 
 ### Rule/update infrastructure
@@ -48,6 +56,10 @@ QuietGuard is a clean-room Windows PUP/system-change monitor. It does not copy M
 - External heuristic rule file with built-in fallback rules
 - Per-user rule database under `%LOCALAPPDATA%\QuietGuard\rules`
 - HTTPS GitHub retrieval with SHA-256 manifest verification
+- Installed-rule hash revalidation even when the version string is unchanged
+- Minimum compatible application version enforcement from the rule manifest
+- Hidden background update check when the GUI starts
+- Background update result log under `%LOCALAPPDATA%\QuietGuard\update.log`
 - Portable Windows CI artifact containing the executable and starter rules
 
 ### Low-memory real-time watcher
@@ -69,17 +81,17 @@ A low-frequency metadata check records changes to:
 
 Events are written to `%LOCALAPPDATA%\QuietGuard\events.log`. The watcher is detection/logging only and does not modify the system.
 
-## Remaining high-value coverage targets
+## Remaining high-value hardening targets
 
-- Focused service/driver anomaly checks: unusual Start/Type/ImagePath combinations and nonstandard driver locations
-- Focused machine-wide COM hijack checks without dumping the entire HKLM COM registry
-- Firefox extension metadata and policy details
-- Browser notification origin details rather than counts only
+These are enhancements rather than blockers for the current read-only 1.0 prototype:
+
+- Focused service/driver anomaly checks using Start/Type/ImagePath combinations
+- Focused machine-wide COM hijack checks without scanning the full HKLM COM tree on every run
+- Firefox extension metadata and browser notification origin details
 - Winsock/LSP baseline/provider allowlisting
-- Selected DNS/proxy reputation intelligence
 - File publisher/signature metadata for suspicious findings
 - PUP publisher/name/hash intelligence feeds where licensing permits
-- Safe quarantine/restore with explicit user approval
-- Cryptographically signed rule/database update channel
+- Safe quarantine/restore with explicit user approval and rollback metadata
+- Independent cryptographic signing for the rule/database update channel
 
 The target is functional overlap with the system areas Malware Zero inspects, not copying its proprietary signatures or database contents.
