@@ -12,6 +12,8 @@ pub fn update_all(force_public_intel: bool) -> Vec<String> {
     out.extend(crate::intel::update_public_feeds(force_public_intel));
     out.push(String::new());
     out.extend(crate::keyed_intel::update_keyed_feeds(force_public_intel));
+    out.push(String::new());
+    out.extend(crate::clam_bridge::update_if_present(force_public_intel));
     out
 }
 
@@ -24,7 +26,7 @@ pub fn spawn_background_update() -> String {
     cmd.arg("--update-data-silent");
     cmd.creation_flags(CREATE_NO_WINDOW);
     match cmd.spawn() {
-        Ok(_) => "[정보] 규칙/공개 DB/선택형 위협 DB 업데이트 확인을 백그라운드에서 시작했습니다.".into(),
+        Ok(_) => "[정보] QuietGuard/공개/선택형 DB 업데이트 확인을 백그라운드에서 시작했습니다.".into(),
         Err(e) => format!("[정보] 자동 DB 업데이트 시작 실패: {}", e),
     }
 }

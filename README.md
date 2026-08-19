@@ -2,57 +2,50 @@
 
 QuietGuard is a low-memory Windows companion to Microsoft Defender focused on PUP/PUA, unwanted persistence, adware/browser hijacking and suspicious system configuration changes rather than traditional antivirus replacement.
 
-## Design goals
+## QuietGuard 1.3
 
-- Rust + native Win32 GUI; no Electron, Python runtime or .NET desktop runtime
-- Keep the always-on watcher small and event-driven
-- Read-only detection first; no automatic deletion until restore/quarantine and false-positive handling are mature
-- Clean-room implementation: Malware Zero is used only as a reference for categories of Windows state worth inspecting; its code and proprietary databases are not copied
+### Always available without user setup
 
-## QuietGuard 1.2
+- Broad Windows persistence/configuration/browser inspection
+- Low-memory native change watcher
+- QuietGuard heuristic rule DB
+- UncheckyAds, FadeMind add.Risk, KADhosts and StevenBlack public domain intelligence
+- Automatic background DB refresh with local disk indexes
 
-QuietGuard combines broad Windows persistence/configuration inspection with low-memory external intelligence.
+### Optional abuse.ch intelligence
 
-### Always available, no API key
+If an abuse.ch Auth-Key is later supplied through `QUIETGUARD_ABUSECH_AUTH_KEY` or `%LOCALAPPDATA%\QuietGuard\secrets.conf`, ThreatFox and URLhaus caches automatically activate. Without a key they are simply skipped.
 
-- QuietGuard system/persistence/browser heuristics
-- UncheckyAds
-- FadeMind add.Risk
-- KADhosts
-- StevenBlack Unified Hosts
+### Optional ClamAV PUA bridge
 
-These public domain lists are downloaded directly from upstream and converted to sorted fixed-width FNV64 disk indexes under `%LOCALAPPDATA%\QuietGuard\intel`. They are binary-searched on demand rather than loaded into resident memory. Normal automatic refresh is once per 24 hours; **DB 업데이트** forces an immediate refresh.
+QuietGuard 1.3 automatically detects an existing `clamscan.exe` installation from PATH, common Program Files locations, or `QUIETGUARD_CLAMSCAN`.
 
-### Optional, automatically activated when one abuse.ch key exists
+When present:
 
-QuietGuard 1.2 includes working ThreatFox and URLhaus adapters. They are not required for normal operation.
+- **시스템 점검** sends a limited set of autorun/service/startup file candidates to `clamscan --detect-pua`.
+- Results are advisory and labelled separately as ClamAV findings.
+- **DB 업데이트** uses `freshclam.exe` when available, at most once per 24 hours during automatic checks; pressing DB update forces a check.
+- ClamAV is never started as an always-on daemon by QuietGuard.
 
-- `QUIETGUARD_ABUSECH_AUTH_KEY` environment variable, or
-- `%LOCALAPPDATA%\QuietGuard\secrets.conf` containing `abusech_auth_key=...`
+When ClamAV is absent, no error or dependency is introduced and the normal QuietGuard/Defender workflow is unchanged.
 
-activates both services. ThreatFox recent IOCs and URLhaus recent malicious URL hostnames are cached as the same low-memory disk indexes and refreshed at most every six hours. A failed refresh preserves the previous cache. The key is passed to the short-lived updater through its environment rather than embedded in source code or the repository.
+## Low-memory intelligence design
 
-A blank template is provided at `config/secrets.conf.example`. No user setup is necessary unless these two optional services are desired.
+Public domain lists are downloaded from their upstream projects and converted to sorted fixed-width FNV64 indexes under `%LOCALAPPDATA%\QuietGuard\intel`. They are binary-searched on demand rather than loaded into resident memory. The always-on watcher performs no feed downloads and does not run ClamAV.
 
-### Detection coverage
+## Main detection surfaces
 
-QuietGuard inspects Hosts, DNS/proxy/PAC, Run/RunOnce/Startup, Winlogon, AppInit/AppCert DLLs, Active Setup, services/drivers, scheduled tasks, IFEO, BITS, Winsock, WMI event consumers, shell associations, App Paths, browser shortcuts, browser extensions/policies/notifications, COM registrations, selected hidden executables, suspicious Windows-process-name locations, Group Policy strings, firewall rules, execution restrictions, Software Restriction Policy, SafeBoot, MozillaPlugins, IE SearchScopes/DOMStorage and local IPsec policy.
+QuietGuard inspects Hosts, DNS/proxy/PAC, Run/RunOnce/Startup, Winlogon, AppInit/AppCert DLLs, Active Setup, services/drivers, scheduled tasks, IFEO, BITS, Winsock, WMI event consumers, shell associations, App Paths, browser shortcuts, Chrome/Edge/Firefox extensions/policies/notifications, COM registrations, selected hidden executables, suspicious Windows-process-name locations, Group Policy strings, firewall rules, execution restrictions, Software Restriction Policy, SafeBoot, MozillaPlugins, IE SearchScopes/DOMStorage and local IPsec policy.
 
-External DB matches are currently checked against proxy/PAC and selected registry URL settings, Chrome/Edge profile settings, extension manifests and scheduled-task text. Findings show the matching source/category.
+Findings are advisory. Unusual or PUA-labelled software is not automatically deleted.
 
-Findings are advisory. Unusual does not automatically mean malicious.
+## Baseline and updates
 
-## Baseline and low-memory watcher
+**기준 저장/기준 비교** provides accepted-state change comparison. The GUI launches a short-lived hidden updater for QuietGuard rules and external DB caches. Results are written under `%LOCALAPPDATA%\QuietGuard`.
 
-**기준 저장/기준 비교** provides accepted-state change comparison. The `--watch` process uses native `RegNotifyChangeKeyValue` plus one `WaitForMultipleObjects` loop for important registry regions, with low-frequency metadata checks for Hosts, Startup and scheduled tasks. The watcher itself performs no feed downloads.
+QuietGuard's own rule file is downloaded over HTTPS and verified against the SHA-256 in `rules/version.json`. An independent publisher-signature layer remains a hardening target.
 
-## Updates
-
-The GUI launches a short-lived hidden updater. It updates QuietGuard's own lightweight rule file, no-key public feeds and, if configured, the abuse.ch caches. Results are written to `%LOCALAPPDATA%\QuietGuard\update.log`.
-
-QuietGuard's own rule file is downloaded over HTTPS and verified against the SHA-256 recorded in `rules/version.json`. An independent publisher-signature layer is still a hardening target.
-
-See `docs/INTELLIGENCE.md` for external-source details.
+See `docs/INTELLIGENCE.md` for source and privacy details.
 
 ## Build and validation
 
@@ -64,4 +57,4 @@ GitHub Actions validates feature branches on `windows-latest` with `cargo check 
 
 ## Status
 
-QuietGuard 1.2 is a defensive, read-only prototype. It complements Microsoft Defender and does not replace antivirus protection. It currently does not automatically delete, quarantine or block findings.
+QuietGuard 1.3 is a defensive, read-only prototype. It complements Microsoft Defender and does not replace antivirus protection. It currently does not automatically delete, quarantine or block findings.
