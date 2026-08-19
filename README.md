@@ -9,11 +9,11 @@ QuietGuard is a low-memory Windows companion to Microsoft Defender focused on PU
 - Read-only detection first. No automatic deletion until restore/quarantine and false-positive handling are mature
 - Clean-room implementation: Malware Zero is used only as a reference for categories of Windows state worth inspecting; its code and databases are not copied
 
-## Current 0.9 manual checks
+## Current 1.0 manual checks
 
 QuietGuard now covers a broad set of Windows nuisance/PUP persistence and hijack surfaces, including:
 
-- Hosts, proxy and explicit DNS configuration
+- Hosts, user proxy/PAC, WinHTTP proxy and explicit DNS configuration
 - Run/RunOnce, Startup folders, Command Processor AutoRun, Winlogon and AppInit DLL locations
 - Services, ServiceDll, scheduled tasks, IFEO Debugger, BITS, Winsock and WMI event-consumer persistence
 - Environment/logon scripts, shell-open associations, uninstall commands and browser shortcuts
@@ -26,13 +26,21 @@ QuietGuard now covers a broad set of Windows nuisance/PUP persistence and hijack
 - 4/12-digit executable-like files in System32/SysWOW64
 - Group Policy `Registry.pol` suspicious command/path strings
 - Chromium extension IDs, background declarations and external `update_url` metadata
+- Windows Firewall rules that launch from suspicious user/temp paths
+- Explorer `DisallowRun` / `RestrictRun` execution policies
+- Software Restriction Policy (`Safer`) suspicious path strings
+- SafeBoot configuration suspicious path/command strings
+- `App Paths` registrations pointing to suspicious locations
+- Mozilla plugin registrations pointing to suspicious locations
+- IE SearchScopes/DOMStorage review points
+- Local IPsec/policy regions with suspicious path/command strings
 
 Findings are intentionally labelled as information/review/warning rather than automatically declaring every unusual configuration malicious.
 
 ## Baseline comparison
 
 - **기준 저장** saves a normalized scan snapshot to `%LOCALAPPDATA%\QuietGuard\baseline.txt`.
-- **기준 비교** rescans and shows newly added or removed/changed findings.
+- **기준 비교** rescans all current 1.0 checks and shows newly added or removed/changed findings.
 
 Only save a baseline after the current PC state has been reviewed as acceptable. The baseline is a change-detection aid, not a trust certificate.
 
@@ -44,15 +52,18 @@ It watches important Run/RunOnce locations, proxy settings, Command Processor, W
 
 ## Rule database updates
 
-`rules/heuristics.conf` contains lightweight extendable heuristics. The GUI includes a **규칙 업데이트** action.
+`rules/heuristics.conf` contains lightweight extendable heuristics. The GUI includes a **규칙 업데이트** action, and QuietGuard 1.0 also starts a hidden rule-update check when the GUI opens.
 
 - Rules are retrieved from this GitHub repository over HTTPS.
 - The downloaded rule file is accepted only when its SHA-256 matches `rules/version.json`.
+- The updater verifies the installed rule hash even when the version string is unchanged.
+- The manifest can declare a minimum compatible QuietGuard version.
 - Updated rules are stored under `%LOCALAPPDATA%\QuietGuard\rules`, so administrator rights are not required.
 - Per-user updated rules take priority over portable/bundled rules.
-- Built-in fallback rules remain available if the external file is absent.
+- Built-in fallback rules remain available if the external file is absent or the update fails.
+- Background update results are written to `%LOCALAPPDATA%\QuietGuard\update.log`.
 
-The current channel provides integrity checking but not an independent cryptographic publisher signature. A signed update channel remains a hardening target.
+The current channel provides HTTPS transport and integrity checking but not an independent cryptographic publisher signature. A signed update channel remains a hardening target.
 
 ## Memory strategy
 
@@ -64,8 +75,8 @@ The project avoids heavy GUI/runtime frameworks. Manual checks may briefly launc
 cargo build --release
 ```
 
-GitHub Actions builds a portable Windows package containing `QuietGuard.exe` and starter rules. v0.7, v0.8 and v0.9 changes were each validated through pull-request Windows Actions runs where `cargo check --release`, `cargo build --release`, packaging and artifact upload all succeeded before merge.
+GitHub Actions builds a portable Windows package containing `QuietGuard.exe` and starter rules. Changes are validated on `windows-latest` with `cargo check --release` and `cargo build --release` before merge.
 
 ## Status
 
-Early defensive prototype. QuietGuard complements Microsoft Defender and does not replace an antivirus product. Findings can include legitimate administrator/user configurations. QuietGuard does not currently delete, quarantine or block anything.
+Defensive 1.0 prototype. QuietGuard complements Microsoft Defender and does not replace an antivirus product. Findings can include legitimate administrator/user configurations. QuietGuard does not currently delete, quarantine or block anything.
