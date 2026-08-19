@@ -12,6 +12,8 @@ mod scanner_extra2;
 mod updater;
 #[cfg(target_os = "windows")]
 mod monitor;
+#[cfg(target_os = "windows")]
+mod baseline;
 
 #[cfg(not(target_os = "windows"))]
 fn main() {
@@ -83,6 +85,9 @@ mod app {
     const ID_UPDATE: usize = 1002;
     const ID_WATCH_START: usize = 1003;
     const ID_WATCH_STOP: usize = 1004;
+    const ID_LOG: usize = 1005;
+    const ID_BASELINE_SAVE: usize = 1006;
+    const ID_BASELINE_COMPARE: usize = 1007;
 
     static mut LISTBOX: HWND = null_mut();
 
@@ -119,61 +124,58 @@ mod app {
         SendMessageW(LISTBOX, LB_ADDSTRING, 0, w.as_ptr() as LPARAM);
     }
 
-    unsafe fn clear_results() {
+    unsafe fn show_lines(lines: Vec<String>) {
         SendMessageW(LISTBOX, LB_RESETCONTENT, 0, 0);
+        for line in lines {
+            add_line(&line);
+        }
     }
 
     unsafe fn run_scan() {
-        clear_results();
-        for line in crate::scanner::run_quick_scan() {
-            add_line(&line);
-        }
-        for line in crate::scanner_extra::run_extra_scan() {
-            add_line(&line);
-        }
-        for line in crate::scanner_extra2::run_extra_scan2() {
-            add_line(&line);
-        }
+        let mut lines = crate::scanner::run_quick_scan();
+        lines.extend(crate::scanner_extra::run_extra_scan());
+        lines.extend(crate::scanner_extra2::run_extra_scan2());
+        show_lines(lines);
     }
 
     unsafe fn run_rule_update() {
-        clear_results();
-        for line in crate::updater::update_rules() {
-            add_line(&line);
-        }
+        show_lines(crate::updater::update_rules());
     }
 
     unsafe fn start_watch() {
-        clear_results();
-        add_line(&crate::monitor::start_background());
-        add_line("변경 이벤트는 %LOCALAPPDATA%\\QuietGuard\\events.log 에 기록됩니다.");
+        show_lines(vec![
+            crate::monitor::start_background(),
+            "변경 이벤트는 %LOCALAPPDATA%\\QuietGuard\\events.log 에 기록됩니다.".into(),
+        ]);
     }
 
     unsafe fn stop_watch() {
-        clear_results();
-        add_line(&crate::monitor::request_stop());
+        show_lines(vec![crate::monitor::request_stop()]);
+    }
+
+    unsafe fn show_watch_log() {
+        show_lines(crate::baseline::recent_events(120));
+    }
+
+    unsafe fn save_baseline() {
+        show_lines(crate::baseline::save_baseline());
+    }
+
+    unsafe fn compare_baseline() {
+        show_lines(crate::baseline::compare_baseline());
     }
 
     unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         match msg {
             WM_COMMAND => {
                 match wparam & 0xFFFF {
-                    ID_SCAN => {
-                        run_scan();
-                        return 0;
-                    }
-                    ID_UPDATE => {
-                        run_rule_update();
-                        return 0;
-                    }
-                    ID_WATCH_START => {
-                        start_watch();
-                        return 0;
-                    }
-                    ID_WATCH_STOP => {
-                        stop_watch();
-                        return 0;
-                    }
+                    ID_SCAN => { run_scan(); return 0; }
+                    ID_UPDATE => { run_rule_update(); return 0; }
+                    ID_WATCH_START => { start_watch(); return 0; }
+                    ID_WATCH_STOP => { stop_watch(); return 0; }
+                    ID_LOG => { show_watch_log(); return 0; }
+                    ID_BASELINE_SAVE => { save_baseline(); return 0; }
+                    ID_BASELINE_COMPARE => { compare_baseline(); return 0; }
                     _ => {}
                 }
             }
@@ -184,6 +186,15 @@ mod app {
             _ => {}
         }
         DefWindowProcW(hwnd, msg, wparam, lparam)
+    }
+
+    unsafe fn make_button(hwnd: HWND, instance: HINSTANCE, x: i32, y: i32, width: i32, id: usize, text: &str) {
+        let button = wide("BUTTON");
+        let caption = wide(text);
+        CreateWindowExW(
+            0, button.as_ptr(), caption.as_ptr(), WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+            x, y, width, 34, hwnd, id as HMENU, instance, null_mut()
+        );
     }
 
     pub fn run() {
@@ -204,48 +215,31 @@ mod app {
             };
             if RegisterClassW(&wc) == 0 { return; }
 
-            let title = wide("QuietGuard 0.6 - PUP / 시스템 변경 점검");
+            let title = wide("QuietGuard 0.7 - PUP / 시스템 변경 점검");
             let hwnd = CreateWindowExW(
                 0, class_name.as_ptr(), title.as_ptr(), WS_OVERLAPPEDWINDOW | WS_VISIBLE,
-                CW_USEDEFAULT, CW_USEDEFAULT, 960, 610,
+                CW_USEDEFAULT, CW_USEDEFAULT, 1040, 660,
                 null_mut(), null_mut(), instance, null_mut()
             );
             if hwnd.is_null() { return; }
 
-            let button = wide("BUTTON");
-            let scan_text = wide("시스템 점검");
-            CreateWindowExW(
-                0, button.as_ptr(), scan_text.as_ptr(), WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                20, 20, 135, 36, hwnd, ID_SCAN as HMENU, instance, null_mut()
-            );
-
-            let update_text = wide("규칙 업데이트");
-            CreateWindowExW(
-                0, button.as_ptr(), update_text.as_ptr(), WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                170, 20, 135, 36, hwnd, ID_UPDATE as HMENU, instance, null_mut()
-            );
-
-            let watch_start_text = wide("실시간 감시 시작");
-            CreateWindowExW(
-                0, button.as_ptr(), watch_start_text.as_ptr(), WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                320, 20, 145, 36, hwnd, ID_WATCH_START as HMENU, instance, null_mut()
-            );
-
-            let watch_stop_text = wide("실시간 감시 중지");
-            CreateWindowExW(
-                0, button.as_ptr(), watch_stop_text.as_ptr(), WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                480, 20, 145, 36, hwnd, ID_WATCH_STOP as HMENU, instance, null_mut()
-            );
+            make_button(hwnd, instance, 20, 18, 130, ID_SCAN, "시스템 점검");
+            make_button(hwnd, instance, 160, 18, 130, ID_UPDATE, "규칙 업데이트");
+            make_button(hwnd, instance, 300, 18, 145, ID_WATCH_START, "실시간 감시 시작");
+            make_button(hwnd, instance, 455, 18, 145, ID_WATCH_STOP, "실시간 감시 중지");
+            make_button(hwnd, instance, 610, 18, 130, ID_LOG, "감시 로그");
+            make_button(hwnd, instance, 20, 62, 130, ID_BASELINE_SAVE, "기준 저장");
+            make_button(hwnd, instance, 160, 62, 130, ID_BASELINE_COMPARE, "기준 비교");
 
             let listbox = wide("LISTBOX");
             LISTBOX = CreateWindowExW(
                 0, listbox.as_ptr(), null(),
                 WS_CHILD | WS_VISIBLE | WS_BORDER | WS_VSCROLL | LBS_NOINTEGRALHEIGHT,
-                20, 72, 900, 475, hwnd, null_mut(), instance, null_mut()
+                20, 112, 980, 490, hwnd, null_mut(), instance, null_mut()
             );
 
-            add_line("QuietGuard 준비됨 - 시스템 점검 / 규칙 업데이트 / 실시간 감시를 사용할 수 있습니다.");
-            add_line("Defender를 대체하지 않으며 PUP/시스템 변조 흔적을 보조 점검합니다.");
+            add_line("QuietGuard 준비됨 - 수동 점검, 규칙 업데이트, 실시간 감시와 기준 비교를 사용할 수 있습니다.");
+            add_line("'기준 저장'은 현재 상태가 정상임을 확인한 뒤 사용하세요.");
             add_line(if crate::monitor::is_running() {
                 "실시간 감시 상태: 실행 중"
             } else {
