@@ -25,8 +25,9 @@ const REG_NOTIFY_CHANGE_NAME: u32 = 0x0000_0001;
 const REG_NOTIFY_CHANGE_LAST_SET: u32 = 0x0000_0004;
 const WATCH_TIMEOUT_MS: u32 = 5_000;
 
-const HKEY_CURRENT_USER: HKEY = 0x8000_0001usize as HKEY;
-const HKEY_LOCAL_MACHINE: HKEY = 0x8000_0002usize as HKEY;
+// Windows predefined HKEY values are sign-extended LONG pseudo handles on x64.
+const HKEY_CURRENT_USER: HKEY = (0x8000_0001u32 as i32 as isize) as HKEY;
+const HKEY_LOCAL_MACHINE: HKEY = (0x8000_0002u32 as i32 as isize) as HKEY;
 const MUTEX_NAME: &str = "Local\\QuietGuardWatcherMutex";
 const STOP_EVENT_NAME: &str = "Local\\QuietGuardWatcherStop";
 
@@ -134,20 +135,32 @@ pub fn run_watcher() {
             return;
         }
 
-        let mut watches = Vec::with_capacity(10);
-        add_reg_watch(&mut watches, "사용자 시작프로그램", HKEY_CURRENT_USER,
+        let mut watches = Vec::with_capacity(16);
+        add_reg_watch(&mut watches, "사용자 시작프로그램 Run", HKEY_CURRENT_USER,
             "Software\\Microsoft\\Windows\\CurrentVersion\\Run", false);
+        add_reg_watch(&mut watches, "사용자 시작프로그램 RunOnce", HKEY_CURRENT_USER,
+            "Software\\Microsoft\\Windows\\CurrentVersion\\RunOnce", false);
         add_reg_watch(&mut watches, "Windows 프록시", HKEY_CURRENT_USER,
             "Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings", false);
-        add_reg_watch(&mut watches, "시스템 시작프로그램", HKEY_LOCAL_MACHINE,
+        add_reg_watch(&mut watches, "사용자 Command Processor", HKEY_CURRENT_USER,
+            "Software\\Microsoft\\Command Processor", false);
+        add_reg_watch(&mut watches, "시스템 시작프로그램 Run", HKEY_LOCAL_MACHINE,
             "Software\\Microsoft\\Windows\\CurrentVersion\\Run", false);
+        add_reg_watch(&mut watches, "시스템 시작프로그램 RunOnce", HKEY_LOCAL_MACHINE,
+            "Software\\Microsoft\\Windows\\CurrentVersion\\RunOnce", false);
+        add_reg_watch(&mut watches, "시스템 Command Processor", HKEY_LOCAL_MACHINE,
+            "Software\\Microsoft\\Command Processor", false);
         add_reg_watch(&mut watches, "Winlogon", HKEY_LOCAL_MACHINE,
             "Software\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon", false);
         add_reg_watch(&mut watches, "서비스/드라이버", HKEY_LOCAL_MACHINE,
             "SYSTEM\\CurrentControlSet\\Services", true);
-        add_reg_watch(&mut watches, "Chrome 정책", HKEY_LOCAL_MACHINE,
+        add_reg_watch(&mut watches, "Chrome 사용자 정책", HKEY_CURRENT_USER,
             "Software\\Policies\\Google\\Chrome", true);
-        add_reg_watch(&mut watches, "Edge 정책", HKEY_LOCAL_MACHINE,
+        add_reg_watch(&mut watches, "Chrome 시스템 정책", HKEY_LOCAL_MACHINE,
+            "Software\\Policies\\Google\\Chrome", true);
+        add_reg_watch(&mut watches, "Edge 사용자 정책", HKEY_CURRENT_USER,
+            "Software\\Policies\\Microsoft\\Edge", true);
+        add_reg_watch(&mut watches, "Edge 시스템 정책", HKEY_LOCAL_MACHINE,
             "Software\\Policies\\Microsoft\\Edge", true);
 
         let mut file_watches = build_file_watches();
@@ -233,9 +246,11 @@ unsafe fn arm_watch(watch: &RegWatch) -> bool {
 }
 
 fn build_file_watches() -> Vec<FileWatch> {
-    let mut watches = Vec::with_capacity(4);
+    let mut watches = Vec::with_capacity(5);
     let windir = env::var("WINDIR").unwrap_or_else(|_| "C:\\Windows".into());
-    add_file_watch(&mut watches, "Hosts", PathBuf::from(windir).join("System32\\drivers\\etc\\hosts"));
+    let windows = PathBuf::from(&windir);
+    add_file_watch(&mut watches, "Hosts", windows.join("System32\\drivers\\etc\\hosts"));
+    add_file_watch(&mut watches, "예약 작업 저장소", windows.join("System32\\Tasks"));
 
     if let Ok(appdata) = env::var("APPDATA") {
         add_file_watch(&mut watches, "사용자 Startup", PathBuf::from(appdata)
