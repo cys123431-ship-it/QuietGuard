@@ -7,9 +7,32 @@ use std::os::windows::process::CommandExt;
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 const MANIFEST_URL: &str = "https://raw.githubusercontent.com/cys123431-ship-it/QuietGuard/main/rules/version.json";
 const RULES_URL: &str = "https://raw.githubusercontent.com/cys123431-ship-it/QuietGuard/main/rules/heuristics.conf";
+const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+pub fn spawn_background_update() -> String {
+    let exe = match env::current_exe() {
+        Ok(v) => v,
+        Err(e) => return format!("[정보] 자동 규칙 업데이트 시작 실패: {}", e),
+    };
+    let mut cmd = Command::new(exe);
+    cmd.arg("--update-rules-silent");
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    match cmd.spawn() {
+        Ok(_) => "[정보] 규칙 DB 자동 업데이트 확인을 백그라운드에서 시작했습니다.".into(),
+        Err(e) => format!("[정보] 자동 규칙 업데이트 시작 실패: {}", e),
+    }
+}
+
+pub fn update_rules_silent() {
+    let lines = update_rules();
+    let dir = data_dir();
+    let _ = fs::create_dir_all(&dir);
+    let body = lines.join("\n") + "\n";
+    let _ = fs::write(dir.join("update.log"), body);
+}
 
 pub fn update_rules() -> Vec<String> {
-    let mut out = Vec::with_capacity(12);
+    let mut out = Vec::with_capacity(14);
     out.push("QuietGuard 규칙 DB 업데이트 확인".to_string());
 
     let dir = local_rules_dir();
@@ -36,7 +59,22 @@ pub fn update_rules() -> Vec<String> {
         }
     };
 
+    let schema = json_number(&manifest, "schema").unwrap_or(0);
+    if schema < 2 {
+        out.push("[차단] 지원하지 않는 규칙 매니페스트 형식입니다.".into());
+        cleanup(&manifest_tmp, &rules_tmp);
+        return out;
+    }
+
     let remote_version = json_string(&manifest, "rules_version").unwrap_or_else(|| "unknown".into());
+    let min_app_version = json_string(&manifest, "min_app_version").unwrap_or_else(|| "0.0.0".into());
+    if version_lt(APP_VERSION, &min_app_version) {
+        out.push(format!("[차단] 규칙 DB {}은 QuietGuard {} 이상이 필요합니다.", remote_version, min_app_version));
+        out.push(format!("현재 프로그램 버전: {}", APP_VERSION));
+        cleanup(&manifest_tmp, &rules_tmp);
+        return out;
+    }
+
     let expected_sha = match json_string(&manifest, "sha256") {
         Some(v) if v.len() == 64 && v.chars().all(|c| c.is_ascii_hexdigit()) => v.to_ascii_lowercase(),
         _ => {
@@ -53,9 +91,15 @@ pub fn update_rules() -> Vec<String> {
         .and_then(|s| json_string(&s, "rules_version"));
 
     if local_rules_path.exists() && local_version.as_deref() == Some(remote_version.as_str()) {
-        out.push(format!("[최신] 규칙 DB {}", remote_version));
-        let _ = fs::remove_file(&manifest_tmp);
-        return out;
+        // Do not trust the version string alone: verify the installed file too.
+        match sha256_file(&local_rules_path) {
+            Ok(hash) if hash == expected_sha => {
+                out.push(format!("[최신] 규칙 DB {} (SHA-256 확인)", remote_version));
+                let _ = fs::remove_file(&manifest_tmp);
+                return out;
+            }
+            _ => out.push("[정보] 로컬 규칙 DB 무결성이 맞지 않아 다시 다운로드합니다.".into()),
+        }
     }
 
     out.push(format!(
@@ -106,21 +150,26 @@ pub fn update_rules() -> Vec<String> {
 }
 
 pub fn local_rules_dir() -> PathBuf {
+    data_dir().join("rules")
+}
+
+fn data_dir() -> PathBuf {
     if let Ok(local) = env::var("LOCALAPPDATA") {
-        return PathBuf::from(local).join("QuietGuard").join("rules");
+        return PathBuf::from(local).join("QuietGuard");
     }
     if let Ok(exe) = env::current_exe() {
         if let Some(parent) = exe.parent() {
-            return parent.join("rules");
+            return parent.to_path_buf();
         }
     }
-    PathBuf::from("rules")
+    PathBuf::from("QuietGuardData")
 }
 
 fn download(url: &str, destination: &Path) -> Result<(), String> {
     let dest = destination.to_string_lossy().to_string();
     let curl = hidden_output("curl.exe", &[
         "--fail", "--silent", "--show-error", "--location",
+        "--proto", "=https", "--tlsv1.2",
         "--connect-timeout", "10", "--max-time", "30",
         "--output", &dest, url,
     ]);
@@ -144,7 +193,7 @@ fn download(url: &str, destination: &Path) -> Result<(), String> {
         Ok(())
     } else {
         let err = String::from_utf8_lossy(&output.stderr);
-        Err(if err.trim().is_empty() { "HTTP 다운로드 실패".into() } else { err.trim().into() })
+        Err(if err.trim().is_empty() { "HTTPS 다운로드 실패".into() } else { err.trim().into() })
     }
 }
 
@@ -197,6 +246,25 @@ fn json_string(text: &str, key: &str) -> Option<String> {
     let after = after.strip_prefix('"')?;
     let end = after.find('"')?;
     Some(after[..end].to_string())
+}
+
+fn json_number(text: &str, key: &str) -> Option<u64> {
+    let needle = format!("\"{}\"", key);
+    let start = text.find(&needle)? + needle.len();
+    let rest = text.get(start..)?;
+    let colon = rest.find(':')?;
+    let after = rest.get(colon + 1..)?.trim_start();
+    let digits: String = after.chars().take_while(|c| c.is_ascii_digit()).collect();
+    digits.parse().ok()
+}
+
+fn version_lt(current: &str, minimum: &str) -> bool {
+    version_tuple(current) < version_tuple(minimum)
+}
+
+fn version_tuple(text: &str) -> (u64, u64, u64) {
+    let mut parts = text.split('.').map(|p| p.chars().take_while(|c| c.is_ascii_digit()).collect::<String>().parse::<u64>().unwrap_or(0));
+    (parts.next().unwrap_or(0), parts.next().unwrap_or(0), parts.next().unwrap_or(0))
 }
 
 fn cleanup(a: &Path, b: &Path) {
