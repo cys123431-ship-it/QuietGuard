@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 jobs:
   windows-build:
@@ -15,8 +16,15 @@ jobs:
         run: cargo check --release
       - name: Build
         run: cargo build --release
-      - name: Upload executable
+      - name: Prepare portable package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path package/rules | Out-Null
+          Copy-Item target/release/quietguard.exe package/QuietGuard.exe
+          Copy-Item rules/heuristics.conf package/rules/heuristics.conf
+          Copy-Item rules/version.json package/rules/version.json
+      - name: Upload portable package
         uses: actions/upload-artifact@v4
         with:
           name: QuietGuard-windows-x64
-          path: target/release/quietguard.exe
+          path: package/
