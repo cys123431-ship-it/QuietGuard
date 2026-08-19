@@ -1,4 +1,4 @@
-use crate::{intel, keyed_intel};
+use crate::{intel, keyed_intel, regional_intel};
 use std::collections::BTreeSet;
 use std::env;
 use std::fs;
@@ -9,13 +9,11 @@ use std::process::Command;
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 pub fn run_extra_scan8() -> Vec<String> {
-    let mut out = Vec::with_capacity(112);
+    let mut out = Vec::with_capacity(120);
     out.push("--- 공개 PUP/애드웨어·선택형 위협 DB 대조 ---".into());
     out.extend(intel::status_lines());
+    out.push(regional_intel::status_line());
     out.extend(keyed_intel::status_lines());
-    if !intel::indexes_ready() && !keyed_intel::keyed_ready() {
-        return out;
-    }
 
     let mut seen = BTreeSet::new();
     scan_registry_urls(&mut out, &mut seen);
@@ -49,10 +47,7 @@ fn scan_registry_urls(out: &mut Vec<String>, seen: &mut BTreeSet<String>) {
 fn scan_browser_profiles(out: &mut Vec<String>, seen: &mut BTreeSet<String>) {
     let Ok(local) = env::var("LOCALAPPDATA") else { return; };
     let root = PathBuf::from(local);
-    const BROWSERS: &[(&str, &str)] = &[
-        ("Chrome", "Google\\Chrome\\User Data"),
-        ("Edge", "Microsoft\\Edge\\User Data"),
-    ];
+    const BROWSERS: &[(&str, &str)] = &[("Chrome", "Google\\Chrome\\User Data"), ("Edge", "Microsoft\\Edge\\User Data")];
     for &(browser, relative) in BROWSERS {
         let base = root.join(relative);
         let Ok(entries) = fs::read_dir(&base) else { continue; };
@@ -60,8 +55,7 @@ fn scan_browser_profiles(out: &mut Vec<String>, seen: &mut BTreeSet<String>) {
             let name = entry.file_name().to_string_lossy().to_string();
             if name != "Default" && !name.starts_with("Profile ") { continue; }
             for file in ["Preferences", "Secure Preferences"] {
-                let path = entry.path().join(file);
-                if let Ok(text) = fs::read_to_string(&path) {
+                if let Ok(text) = fs::read_to_string(entry.path().join(file)) {
                     inspect_text(&format!("{} {} {}", browser, name, file), &text, out, seen, 35);
                 }
             }
@@ -72,18 +66,14 @@ fn scan_browser_profiles(out: &mut Vec<String>, seen: &mut BTreeSet<String>) {
 fn scan_extension_manifests(out: &mut Vec<String>, seen: &mut BTreeSet<String>) {
     let Ok(local) = env::var("LOCALAPPDATA") else { return; };
     let root = PathBuf::from(local);
-    const BROWSERS: &[(&str, &str)] = &[
-        ("Chrome", "Google\\Chrome\\User Data"),
-        ("Edge", "Microsoft\\Edge\\User Data"),
-    ];
+    const BROWSERS: &[(&str, &str)] = &[("Chrome", "Google\\Chrome\\User Data"), ("Edge", "Microsoft\\Edge\\User Data")];
     for &(browser, relative) in BROWSERS {
         let base = root.join(relative);
         let Ok(profiles) = fs::read_dir(&base) else { continue; };
         for profile in profiles.flatten() {
             let name = profile.file_name().to_string_lossy().to_string();
             if name != "Default" && !name.starts_with("Profile ") { continue; }
-            let ext_root = profile.path().join("Extensions");
-            let Ok(exts) = fs::read_dir(ext_root) else { continue; };
+            let Ok(exts) = fs::read_dir(profile.path().join("Extensions")) else { continue; };
             for ext in exts.flatten().take(160) {
                 if !ext.path().is_dir() { continue; }
                 let Ok(versions) = fs::read_dir(ext.path()) else { continue; };
@@ -112,6 +102,14 @@ fn inspect_text(label: &str, text: &str, out: &mut Vec<String>, seen: &mut BTree
             out.push(format!("{} {}: {} | {} ({})", prefix, label, hit.matched_domain, hit.source, hit.category));
             emitted += 1;
             if emitted >= max_new { return; }
+        }
+        if let Some(domain) = regional_intel::lookup_domain(&candidate) {
+            let key = format!("YousList|{}", domain);
+            if seen.insert(key) {
+                out.push(format!("[참고-한국광고DB] {}: {} | YousList (광고 참고, 악성 판정 아님)", label, domain));
+                emitted += 1;
+                if emitted >= max_new { return; }
+            }
         }
         for hit in keyed_intel::lookup_domain(&candidate) {
             let key = format!("{}|{}", hit.source, hit.matched_domain);

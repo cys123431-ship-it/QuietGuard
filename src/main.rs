@@ -25,7 +25,11 @@ mod updater;
 #[cfg(target_os = "windows")]
 mod intel;
 #[cfg(target_os = "windows")]
+mod regional_intel;
+#[cfg(target_os = "windows")]
 mod keyed_intel;
+#[cfg(target_os = "windows")]
+mod safe_browsing;
 #[cfg(target_os = "windows")]
 mod clam_bridge;
 #[cfg(target_os = "windows")]
@@ -36,9 +40,7 @@ mod monitor;
 mod baseline;
 
 #[cfg(not(target_os = "windows"))]
-fn main() {
-    println!("QuietGuard targets Windows 10/11.");
-}
+fn main() { println!("QuietGuard targets Windows 10/11."); }
 
 #[cfg(target_os = "windows")]
 mod app {
@@ -76,14 +78,8 @@ mod app {
 
     #[repr(C)]
     struct MSG {
-        hwnd: HWND,
-        message: UINT,
-        w_param: WPARAM,
-        l_param: LPARAM,
-        time: DWORD,
-        pt_x: i32,
-        pt_y: i32,
-        l_private: DWORD,
+        hwnd: HWND, message: UINT, w_param: WPARAM, l_param: LPARAM,
+        time: DWORD, pt_x: i32, pt_y: i32, l_private: DWORD,
     }
 
     const WS_OVERLAPPEDWINDOW: DWORD = 0x00CF0000;
@@ -101,7 +97,6 @@ mod app {
     const LB_RESETCONTENT: UINT = 0x0184;
     const COLOR_WINDOW: isize = 5;
     const IDC_ARROW: LPCWSTR = 32512usize as LPCWSTR;
-
     const ID_SCAN: usize = 1001;
     const ID_UPDATE: usize = 1002;
     const ID_WATCH_START: usize = 1003;
@@ -115,11 +110,9 @@ mod app {
     #[link(name = "user32")]
     extern "system" {
         fn RegisterClassW(lpWndClass: *const WNDCLASSW) -> ATOM;
-        fn CreateWindowExW(
-            dwExStyle: DWORD, lpClassName: LPCWSTR, lpWindowName: LPCWSTR,
+        fn CreateWindowExW(dwExStyle: DWORD, lpClassName: LPCWSTR, lpWindowName: LPCWSTR,
             dwStyle: DWORD, x: i32, y: i32, nWidth: i32, nHeight: i32,
-            hWndParent: HWND, hMenu: HMENU, hInstance: HINSTANCE, lpParam: *mut c_void
-        ) -> HWND;
+            hWndParent: HWND, hMenu: HMENU, hInstance: HINSTANCE, lpParam: *mut c_void) -> HWND;
         fn DefWindowProcW(hWnd: HWND, Msg: UINT, wParam: WPARAM, lParam: LPARAM) -> LRESULT;
         fn ShowWindow(hWnd: HWND, nCmdShow: i32) -> i32;
         fn UpdateWindow(hWnd: HWND) -> i32;
@@ -130,24 +123,18 @@ mod app {
         fn LoadCursorW(hInstance: HINSTANCE, lpCursorName: LPCWSTR) -> HCURSOR;
         fn SendMessageW(hWnd: HWND, Msg: UINT, wParam: WPARAM, lParam: LPARAM) -> LRESULT;
     }
-
     #[link(name = "kernel32")]
-    extern "system" {
-        fn GetModuleHandleW(lpModuleName: LPCWSTR) -> HINSTANCE;
-    }
+    extern "system" { fn GetModuleHandleW(lpModuleName: LPCWSTR) -> HINSTANCE; }
 
     fn wide(s: &str) -> Vec<u16> { s.encode_utf16().chain(std::iter::once(0)).collect() }
-
     unsafe fn add_line(text: &str) {
         let w = wide(text);
         SendMessageW(LISTBOX, LB_ADDSTRING, 0, w.as_ptr() as LPARAM);
     }
-
     unsafe fn show_lines(lines: Vec<String>) {
         SendMessageW(LISTBOX, LB_RESETCONTENT, 0, 0);
         for line in lines { add_line(&line); }
     }
-
     unsafe fn run_scan() {
         let mut lines = crate::scanner::run_quick_scan();
         lines.extend(crate::scanner_extra::run_extra_scan());
@@ -159,17 +146,15 @@ mod app {
         lines.extend(crate::scanner_extra7::run_extra_scan7());
         lines.extend(crate::scanner_extra8::run_extra_scan8());
         lines.extend(crate::clam_bridge::scan_candidates());
+        lines.extend(crate::safe_browsing::scan_opt_in());
         show_lines(lines);
     }
-
     unsafe fn wnd_action(id: usize) {
         match id {
             ID_SCAN => run_scan(),
             ID_UPDATE => show_lines(crate::data_update::update_all(true)),
-            ID_WATCH_START => show_lines(vec![
-                crate::monitor::start_background(),
-                "변경 이벤트는 %LOCALAPPDATA%\\QuietGuard\\events.log 에 기록됩니다.".into(),
-            ]),
+            ID_WATCH_START => show_lines(vec![crate::monitor::start_background(),
+                "변경 이벤트는 %LOCALAPPDATA%\\QuietGuard\\events.log 에 기록됩니다.".into()]),
             ID_WATCH_STOP => show_lines(vec![crate::monitor::request_stop()]),
             ID_LOG => show_lines(crate::baseline::recent_events(120)),
             ID_BASELINE_SAVE => show_lines(crate::baseline::save_baseline()),
@@ -177,7 +162,6 @@ mod app {
             _ => {}
         }
     }
-
     unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         match msg {
             WM_COMMAND => { wnd_action(wparam & 0xFFFF); return 0; }
@@ -186,10 +170,8 @@ mod app {
         }
         DefWindowProcW(hwnd, msg, wparam, lparam)
     }
-
     unsafe fn make_button(hwnd: HWND, instance: HINSTANCE, x: i32, y: i32, width: i32, id: usize, text: &str) {
-        let class = wide("BUTTON");
-        let caption = wide(text);
+        let class = wide("BUTTON"); let caption = wide(text);
         CreateWindowExW(0, class.as_ptr(), caption.as_ptr(), WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
             x, y, width, 34, hwnd, id as HMENU, instance, null_mut());
     }
@@ -198,18 +180,14 @@ mod app {
         unsafe {
             let instance = GetModuleHandleW(null());
             let class_name = wide("QuietGuardNativeWindow");
-            let wc = WNDCLASSW {
-                style: 0, lpfn_wnd_proc: Some(wnd_proc), cb_cls_extra: 0, cb_wnd_extra: 0,
+            let wc = WNDCLASSW { style: 0, lpfn_wnd_proc: Some(wnd_proc), cb_cls_extra: 0, cb_wnd_extra: 0,
                 h_instance: instance, h_icon: null_mut(), h_cursor: LoadCursorW(null_mut(), IDC_ARROW),
-                hbr_background: (COLOR_WINDOW + 1) as HBRUSH, lpsz_menu_name: null(), lpsz_class_name: class_name.as_ptr(),
-            };
+                hbr_background: (COLOR_WINDOW + 1) as HBRUSH, lpsz_menu_name: null(), lpsz_class_name: class_name.as_ptr() };
             if RegisterClassW(&wc) == 0 { return; }
-
             let title = wide("QuietGuard - PUP / 시스템 변경 점검");
             let hwnd = CreateWindowExW(0, class_name.as_ptr(), title.as_ptr(), WS_OVERLAPPEDWINDOW | WS_VISIBLE,
                 CW_USEDEFAULT, CW_USEDEFAULT, 1040, 660, null_mut(), null_mut(), instance, null_mut());
             if hwnd.is_null() { return; }
-
             make_button(hwnd, instance, 20, 18, 130, ID_SCAN, "시스템 점검");
             make_button(hwnd, instance, 160, 18, 130, ID_UPDATE, "DB 업데이트");
             make_button(hwnd, instance, 300, 18, 145, ID_WATCH_START, "실시간 감시 시작");
@@ -217,27 +195,19 @@ mod app {
             make_button(hwnd, instance, 610, 18, 130, ID_LOG, "감시 로그");
             make_button(hwnd, instance, 20, 62, 130, ID_BASELINE_SAVE, "기준 저장");
             make_button(hwnd, instance, 160, 62, 130, ID_BASELINE_COMPARE, "기준 비교");
-
             let listbox = wide("LISTBOX");
-            LISTBOX = CreateWindowExW(0, listbox.as_ptr(), null(),
-                WS_CHILD | WS_VISIBLE | WS_BORDER | WS_VSCROLL | LBS_NOINTEGRALHEIGHT,
+            LISTBOX = CreateWindowExW(0, listbox.as_ptr(), null(), WS_CHILD | WS_VISIBLE | WS_BORDER | WS_VSCROLL | LBS_NOINTEGRALHEIGHT,
                 20, 112, 980, 490, hwnd, null_mut(), instance, null_mut());
-
             add_line("QuietGuard 준비됨 - 시스템 점검, DB 업데이트, 실시간 감시와 기준 비교를 사용할 수 있습니다.");
             add_line("Defender를 대체하지 않으며 PUP/광고프로그램/하이재킹 및 시스템 변조 흔적에 집중합니다.");
-            add_line("공개 PUP/애드웨어 도메인 DB는 상주 메모리에 적재하지 않고 디스크 인덱스로 조회합니다.");
             add_line(&crate::keyed_intel::abusech_config_status());
+            add_line(&crate::safe_browsing::status_line());
             add_line(&crate::clam_bridge::status_line());
             add_line(if crate::monitor::is_running() { "실시간 감시 상태: 실행 중" } else { "실시간 감시 상태: 중지됨" });
-            ShowWindow(hwnd, SW_SHOW);
-            UpdateWindow(hwnd);
+            ShowWindow(hwnd, SW_SHOW); UpdateWindow(hwnd);
             add_line(&crate::data_update::spawn_background_update());
-
             let mut msg: MSG = zeroed();
-            while GetMessageW(&mut msg, null_mut(), 0, 0) > 0 {
-                TranslateMessage(&msg);
-                DispatchMessageW(&msg);
-            }
+            while GetMessageW(&mut msg, null_mut(), 0, 0) > 0 { TranslateMessage(&msg); DispatchMessageW(&msg); }
         }
     }
 }
@@ -245,11 +215,7 @@ mod app {
 #[cfg(target_os = "windows")]
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    if args.iter().any(|arg| arg == "--watch") {
-        monitor::run_watcher();
-    } else if args.iter().any(|arg| arg == "--update-data-silent" || arg == "--update-rules-silent") {
-        data_update::update_silent();
-    } else {
-        app::run();
-    }
+    if args.iter().any(|arg| arg == "--watch") { monitor::run_watcher(); }
+    else if args.iter().any(|arg| arg == "--update-data-silent" || arg == "--update-rules-silent") { data_update::update_silent(); }
+    else { app::run(); }
 }
