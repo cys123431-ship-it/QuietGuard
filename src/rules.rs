@@ -89,11 +89,21 @@ fn push_unique(items: &mut Vec<String>, value: String) {
 
 fn candidate_paths() -> Vec<PathBuf> {
     let mut paths = Vec::new();
+
+    // Updated rules live in a writable per-user directory so QuietGuard does
+    // not need administrator rights even when installed under Program Files.
+    if let Ok(local) = std::env::var("LOCALAPPDATA") {
+        paths.push(PathBuf::from(local).join("QuietGuard").join("rules").join("heuristics.conf"));
+    }
+
+    // Portable/bundled fallback next to the executable.
     if let Ok(exe) = std::env::current_exe() {
         if let Some(parent) = exe.parent() {
             paths.push(parent.join("rules").join("heuristics.conf"));
         }
     }
+
+    // Developer checkout fallback.
     paths.push(Path::new("rules").join("heuristics.conf"));
     paths
 }
