@@ -1,6 +1,6 @@
 [package]
 name = "quietguard"
-version = "0.7.0"
+version = "0.8.0"
 edition = "2021"
 description = "Low-memory Windows PUP and system-change monitor"
 license = "MIT"
