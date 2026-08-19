@@ -45,8 +45,8 @@ pub fn toggle_db_autoupdate() -> Vec<String> {
         let result = hidden_status("schtasks.exe", &["/Create", "/F", "/SC", "HOURLY", "/MO", DB_TASK_HOURS, "/TN", DB_TASK, "/TR", &command, "/RL", "LIMITED"]);
         if result {
             vec!["[완료] DB 주기 자동 업데이트를 켰습니다.".into(),
-                 "예약 실행: 6시간마다. 소스별 최적 주기가 아니면 다운로드를 건너뜁니다.".into(),
-                 "ThreatFox/URLhaus 6h · ClamAV 12h · 공개 PUP/도메인 72h · YousList 72h".into()]
+                 "예약 실행: 6시간마다. 각 소스의 고정 주기가 아니면 실제 다운로드는 건너뜁니다.".into(),
+                 "ThreatFox/URLhaus 6h · QuietGuard 규칙 확인 6h · 공개/한국 목록 24h · ClamAV 24h".into()]
         } else {
             vec!["[오류] DB 자동 업데이트 예약 작업을 만들지 못했습니다.".into(), "현재 사용자 권한에서 작업 스케줄러 등록이 허용되는지 확인이 필요합니다.".into()]
         }
@@ -57,8 +57,8 @@ pub fn status_lines() -> Vec<String> {
     vec![
         format!("Windows 시작 시 QuietGuard: {}", on_off(windows_startup_enabled())),
         format!("실시간 감시 자동 시작: {}", on_off(monitor_autostart_enabled())),
-        format!("DB 주기 자동 업데이트: {} (고정 6시간 스케줄 / 소스별 주기 적용)", on_off(db_autoupdate_enabled())),
-        "DB 최적 주기: ThreatFox/URLhaus 6h · ClamAV 12h · 공개 PUP/도메인 72h · YousList 72h".into(),
+        format!("DB 주기 자동 업데이트: {} (고정 6시간 스케줄 / 소스별 고정 주기)", on_off(db_autoupdate_enabled())),
+        "DB 고정 주기: ThreatFox/URLhaus 6h · QuietGuard 규칙 확인 6h · 공개 PUP/도메인 24h · YousList 24h · ClamAV 24h".into(),
     ]
 }
 
