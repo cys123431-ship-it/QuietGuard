@@ -9,15 +9,19 @@ QuietGuard is a low-memory Windows companion to Microsoft Defender focused on PU
 - Read-only detection first. No automatic deletion until restore/quarantine and false-positive handling are mature
 - Clean-room implementation: Malware Zero is used only as a reference for categories of Windows state worth inspecting; its code and databases are not copied
 
-## Current 0.2 checks
+## Current 0.3 checks
 
-Hosts, proxy, explicit DNS configuration, Run/RunOnce and other registry persistence locations, Startup folders, service ImagePath values, scheduled tasks, Chrome/Edge/Firefox extension inventory, and browser force-install extension policies.
+QuietGuard now inspects Hosts, proxy, explicit DNS configuration, Run/RunOnce and other registry persistence locations, Startup folders, service ImagePath and ServiceDll values, scheduled tasks, IFEO Debugger entries, BITS jobs, Winsock catalog output, WMI permanent event consumers, Chrome/Edge/Firefox extension inventory, browser force-install extension policies, and browser home/search policy overrides.
 
 See `docs/COVERAGE.md` for the detailed roadmap.
 
 ## Rules
 
 `rules/heuristics.conf` contains simple extendable heuristics. The executable has safe built-in defaults, so it still runs if the external file is absent.
+
+## Memory strategy
+
+The project avoids heavy GUI/runtime frameworks. Some deep manual checks may briefly launch Windows built-in utilities such as `reg`, `schtasks`, `netsh`, `bitsadmin`, or PowerShell, but these are transient scan-time processes rather than always-on dependencies. The future real-time monitor is intended to use native Windows notifications/APIs and stay small in memory.
 
 ## Build
 
