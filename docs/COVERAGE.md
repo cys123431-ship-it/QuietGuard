@@ -2,7 +2,7 @@
 
 QuietGuard is a clean-room Windows PUP/system-change monitor. It does not copy Malware Zero code or databases.
 
-## Implemented in 0.3
+## Implemented in 0.4
 
 - Hosts custom-entry inspection
 - Windows proxy state
@@ -22,6 +22,13 @@ QuietGuard is a clean-room Windows PUP/system-change monitor. It does not copy M
 - Chrome, Edge and Firefox extension inventory
 - Chrome/Edge force-installed extension policy detection
 - Browser home/search/startup policy inspection
+- User/system environment-variable inspection
+- UserInitMprLogonScript inspection
+- User Shell Folders Startup override inspection
+- EXE/script/HTTP(S) shell-open association inspection
+- Uninstall/QuietUninstall command inspection
+- Browser shortcut target/argument inspection
+- IE ElevationPolicy AppName/AppPath inspection
 - External heuristic rule file
 
 ## Next coverage targets
@@ -29,8 +36,8 @@ QuietGuard is a clean-room Windows PUP/system-change monitor. It does not copy M
 - Driver/service subkey heuristics beyond ImagePath/ServiceDll
 - Winsock/LSP baselining and provider allowlisting
 - Browser notification abuse
-- File association and shell-open command hijacks
-- Additional COM/CLSID persistence points
+- Additional COM/CLSID/TypeLib/Interface persistence points
+- Hidden/super-hidden executable heuristics in selected locations
 - Browser extension metadata/reputation checks
 - PUP publisher/name/hash intelligence feeds
 - Safe quarantine/restore model
