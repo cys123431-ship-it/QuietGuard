@@ -48,7 +48,7 @@ Only save a baseline after the current PC state has been reviewed as acceptable.
 
 The background `--watch` mode uses native `RegNotifyChangeKeyValue` notifications and a single `WaitForMultipleObjects` loop rather than repeatedly rescanning the whole PC or creating a worker thread per target.
 
-It watches important Run/RunOnce locations, proxy settings, Command Processor, Winlogon, the Services/driver registry tree, available Chrome/Edge policies, Hosts, Startup folders and the Windows scheduled-task store. Changes are written to `%LOCALAPPDATA%\QuietGuard\events.log`; the GUI **감시 로그** action shows recent entries.
+It watches Run/RunOnce, proxy/PAC, Command Processor, Winlogon, Services/drivers, SafeBoot, Windows Firewall rules, App Paths, Explorer execution-restriction policies, Software Restriction Policy, IE SearchScopes, MozillaPlugins and available Chrome/Edge policy keys. A low-frequency metadata check also watches Hosts, Startup folders and the Windows scheduled-task store. Changes are written to `%LOCALAPPDATA%\QuietGuard\events.log`; the GUI **감시 로그** action shows recent entries.
 
 ## Rule database updates
 
