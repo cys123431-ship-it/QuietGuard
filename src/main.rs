@@ -8,6 +8,8 @@ mod scanner;
 mod scanner_extra;
 #[cfg(target_os = "windows")]
 mod scanner_extra2;
+#[cfg(target_os = "windows")]
+mod updater;
 
 #[cfg(not(target_os = "windows"))]
 fn main() {
@@ -76,6 +78,7 @@ mod app {
     const COLOR_WINDOW: isize = 5;
     const IDC_ARROW: LPCWSTR = 32512usize as LPCWSTR;
     const ID_SCAN: usize = 1001;
+    const ID_UPDATE: usize = 1002;
 
     static mut LISTBOX: HWND = null_mut();
 
@@ -112,8 +115,12 @@ mod app {
         SendMessageW(LISTBOX, LB_ADDSTRING, 0, w.as_ptr() as LPARAM);
     }
 
-    unsafe fn run_scan() {
+    unsafe fn clear_results() {
         SendMessageW(LISTBOX, LB_RESETCONTENT, 0, 0);
+    }
+
+    unsafe fn run_scan() {
+        clear_results();
         for line in crate::scanner::run_quick_scan() {
             add_line(&line);
         }
@@ -125,12 +132,26 @@ mod app {
         }
     }
 
+    unsafe fn run_rule_update() {
+        clear_results();
+        for line in crate::updater::update_rules() {
+            add_line(&line);
+        }
+    }
+
     unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         match msg {
             WM_COMMAND => {
-                if (wparam & 0xFFFF) == ID_SCAN {
-                    run_scan();
-                    return 0;
+                match wparam & 0xFFFF {
+                    ID_SCAN => {
+                        run_scan();
+                        return 0;
+                    }
+                    ID_UPDATE => {
+                        run_rule_update();
+                        return 0;
+                    }
+                    _ => {}
                 }
             }
             WM_DESTROY => {
@@ -160,7 +181,7 @@ mod app {
             };
             if RegisterClassW(&wc) == 0 { return; }
 
-            let title = wide("QuietGuard 0.4 - PUP / 시스템 변경 점검");
+            let title = wide("QuietGuard 0.5 - PUP / 시스템 변경 점검");
             let hwnd = CreateWindowExW(
                 0, class_name.as_ptr(), title.as_ptr(), WS_OVERLAPPEDWINDOW | WS_VISIBLE,
                 CW_USEDEFAULT, CW_USEDEFAULT, 900, 590,
@@ -169,10 +190,16 @@ mod app {
             if hwnd.is_null() { return; }
 
             let button = wide("BUTTON");
-            let button_text = wide("시스템 점검");
+            let scan_text = wide("시스템 점검");
             CreateWindowExW(
-                0, button.as_ptr(), button_text.as_ptr(), WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+                0, button.as_ptr(), scan_text.as_ptr(), WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
                 20, 20, 140, 36, hwnd, ID_SCAN as HMENU, instance, null_mut()
+            );
+
+            let update_text = wide("규칙 업데이트");
+            CreateWindowExW(
+                0, button.as_ptr(), update_text.as_ptr(), WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+                180, 20, 140, 36, hwnd, ID_UPDATE as HMENU, instance, null_mut()
             );
 
             let listbox = wide("LISTBOX");
@@ -182,7 +209,7 @@ mod app {
                 20, 72, 840, 455, hwnd, null_mut(), instance, null_mut()
             );
 
-            add_line("QuietGuard 준비됨 - 시스템 점검을 눌러주세요.");
+            add_line("QuietGuard 준비됨 - 시스템 점검 또는 규칙 업데이트를 선택하세요.");
             add_line("Defender를 대체하지 않으며 PUP/시스템 변조 흔적을 보조 점검합니다.");
             ShowWindow(hwnd, SW_SHOW);
             UpdateWindow(hwnd);
