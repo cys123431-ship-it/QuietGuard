@@ -14,14 +14,14 @@
 10. v0.10 - service/driver combination analysis, Firefox metadata/policies and notification-origin details
 11. v0.11 - targeted machine CLSID/App Paths checks and Authenticode signer context for suspicious files
 12. v1.0 - network/policy inspection expansion, automatic rule checks, stronger rule integrity validation and wider low-memory change monitoring
+13. v1.1 - automatic no-key public PUP/adware/risk domain feeds, low-memory disk indexes and scan-time reputation cross-checking
 
-## Post-1.0 hardening
+## Next hardening
 
-- Optional public/licensed PUP/hash/domain reputation context with local caching
-- Winsock/LSP provider baseline and allowlisting
-- More precise service/driver reputation and signer scoring
-- Safe quarantine/restore only after rollback and false-positive handling are mature
-- Independent cryptographic publisher signing for rule/update metadata
-- Settings/log retention and installer/release packaging
+14. v1.2 - optional ThreatFox/URLhaus adapters with locally cached IOC data; no key required for normal operation
+15. v1.3 - optional Google Safe Browsing `UNWANTED_SOFTWARE` URL lookups and on-demand ClamAV PUA bridge
+16. v1.4 - Winsock/LSP allowlisting, stronger signer/reputation scoring and false-positive controls
+17. v1.5 - safe quarantine/restore with explicit approval and rollback metadata
+18. v2.0 - independent signed QuietGuard update metadata, stable installer/recovery flow and release hardening
 
-QuietGuard 1.0 intentionally remains read-only. It detects and records suspicious or unwanted system state without automatically removing or blocking entries.
+QuietGuard remains read-only until restore and false-positive handling are mature enough to make remediation safe.
