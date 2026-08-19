@@ -1,0 +1,7 @@
+{
+  "rules": [
+    {"id":"hosts-custom-entry","severity":"medium","enabled":true},
+    {"id":"proxy-enabled","severity":"medium","enabled":true},
+    {"id":"startup-from-temp","severity":"high","enabled":true}
+  ]
+}
