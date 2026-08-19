@@ -91,6 +91,7 @@ fn collect_scan_lines() -> Vec<String> {
     all.extend(crate::scanner::run_quick_scan());
     all.extend(crate::scanner_extra::run_extra_scan());
     all.extend(crate::scanner_extra2::run_extra_scan2());
+    all.extend(crate::scanner_extra3::run_extra_scan3());
     all
 }
 
