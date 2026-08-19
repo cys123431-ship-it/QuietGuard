@@ -25,7 +25,6 @@ const REG_NOTIFY_CHANGE_NAME: u32 = 0x0000_0001;
 const REG_NOTIFY_CHANGE_LAST_SET: u32 = 0x0000_0004;
 const WATCH_TIMEOUT_MS: u32 = 5_000;
 
-// Windows predefined HKEY values are sign-extended LONG pseudo handles on x64.
 const HKEY_CURRENT_USER: HKEY = (0x8000_0001u32 as i32 as isize) as HKEY;
 const HKEY_LOCAL_MACHINE: HKEY = (0x8000_0002u32 as i32 as isize) as HKEY;
 const MUTEX_NAME: &str = "Local\\QuietGuardWatcherMutex";
@@ -135,12 +134,12 @@ pub fn run_watcher() {
             return;
         }
 
-        let mut watches = Vec::with_capacity(16);
+        let mut watches = Vec::with_capacity(32);
         add_reg_watch(&mut watches, "사용자 시작프로그램 Run", HKEY_CURRENT_USER,
             "Software\\Microsoft\\Windows\\CurrentVersion\\Run", false);
         add_reg_watch(&mut watches, "사용자 시작프로그램 RunOnce", HKEY_CURRENT_USER,
             "Software\\Microsoft\\Windows\\CurrentVersion\\RunOnce", false);
-        add_reg_watch(&mut watches, "Windows 프록시", HKEY_CURRENT_USER,
+        add_reg_watch(&mut watches, "Windows 프록시/PAC", HKEY_CURRENT_USER,
             "Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings", false);
         add_reg_watch(&mut watches, "사용자 Command Processor", HKEY_CURRENT_USER,
             "Software\\Microsoft\\Command Processor", false);
@@ -154,6 +153,26 @@ pub fn run_watcher() {
             "Software\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon", false);
         add_reg_watch(&mut watches, "서비스/드라이버", HKEY_LOCAL_MACHINE,
             "SYSTEM\\CurrentControlSet\\Services", true);
+        add_reg_watch(&mut watches, "SafeBoot", HKEY_LOCAL_MACHINE,
+            "SYSTEM\\CurrentControlSet\\Control\\SafeBoot", true);
+        add_reg_watch(&mut watches, "Windows 방화벽 규칙", HKEY_LOCAL_MACHINE,
+            "SYSTEM\\CurrentControlSet\\Services\\SharedAccess\\Parameters\\FirewallPolicy\\FirewallRules", false);
+        add_reg_watch(&mut watches, "사용자 App Paths", HKEY_CURRENT_USER,
+            "Software\\Microsoft\\Windows\\CurrentVersion\\App Paths", true);
+        add_reg_watch(&mut watches, "시스템 App Paths", HKEY_LOCAL_MACHINE,
+            "Software\\Microsoft\\Windows\\CurrentVersion\\App Paths", true);
+        add_reg_watch(&mut watches, "사용자 Explorer 정책", HKEY_CURRENT_USER,
+            "Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer", true);
+        add_reg_watch(&mut watches, "시스템 Explorer 정책", HKEY_LOCAL_MACHINE,
+            "Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer", true);
+        add_reg_watch(&mut watches, "Software Restriction Policy", HKEY_LOCAL_MACHINE,
+            "Software\\Policies\\Microsoft\\Windows\\Safer", true);
+        add_reg_watch(&mut watches, "IE SearchScopes", HKEY_CURRENT_USER,
+            "Software\\Microsoft\\Internet Explorer\\SearchScopes", true);
+        add_reg_watch(&mut watches, "사용자 MozillaPlugins", HKEY_CURRENT_USER,
+            "Software\\MozillaPlugins", true);
+        add_reg_watch(&mut watches, "시스템 MozillaPlugins", HKEY_LOCAL_MACHINE,
+            "Software\\MozillaPlugins", true);
         add_reg_watch(&mut watches, "Chrome 사용자 정책", HKEY_CURRENT_USER,
             "Software\\Policies\\Google\\Chrome", true);
         add_reg_watch(&mut watches, "Chrome 시스템 정책", HKEY_LOCAL_MACHINE,
