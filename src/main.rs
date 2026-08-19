@@ -17,6 +17,8 @@ mod scanner_extra5;
 #[cfg(target_os = "windows")]
 mod scanner_extra6;
 #[cfg(target_os = "windows")]
+mod scanner_extra7;
+#[cfg(target_os = "windows")]
 mod updater;
 #[cfg(target_os = "windows")]
 mod monitor;
@@ -147,6 +149,7 @@ mod app {
         lines.extend(crate::scanner_extra4::run_extra_scan4());
         lines.extend(crate::scanner_extra5::run_extra_scan5());
         lines.extend(crate::scanner_extra6::run_extra_scan6());
+        lines.extend(crate::scanner_extra7::run_extra_scan7());
         show_lines(lines);
     }
 
@@ -251,6 +254,7 @@ mod app {
             );
 
             add_line("QuietGuard 준비됨 - 수동 점검, 규칙 업데이트, 실시간 감시와 기준 비교를 사용할 수 있습니다.");
+            add_line("Defender를 대체하지 않으며 PUP/광고프로그램/하이재킹 및 시스템 변조 흔적에 집중합니다.");
             add_line("'기준 저장'은 현재 상태가 정상임을 확인한 뒤 사용하세요.");
             add_line(if crate::monitor::is_running() {
                 "실시간 감시 상태: 실행 중"
@@ -259,6 +263,7 @@ mod app {
             });
             ShowWindow(hwnd, SW_SHOW);
             UpdateWindow(hwnd);
+            add_line(&crate::updater::spawn_background_update());
 
             let mut msg: MSG = zeroed();
             while GetMessageW(&mut msg, null_mut(), 0, 0) > 0 {
@@ -273,6 +278,8 @@ mod app {
 fn main() {
     if std::env::args().any(|arg| arg == "--watch") {
         monitor::run_watcher();
+    } else if std::env::args().any(|arg| arg == "--update-rules-silent") {
+        updater::update_rules_silent();
     } else {
         app::run();
     }
