@@ -13,6 +13,8 @@ mod scanner_extra3;
 #[cfg(target_os = "windows")]
 mod scanner_extra4;
 #[cfg(target_os = "windows")]
+mod scanner_extra5;
+#[cfg(target_os = "windows")]
 mod updater;
 #[cfg(target_os = "windows")]
 mod monitor;
@@ -141,6 +143,7 @@ mod app {
         lines.extend(crate::scanner_extra2::run_extra_scan2());
         lines.extend(crate::scanner_extra3::run_extra_scan3());
         lines.extend(crate::scanner_extra4::run_extra_scan4());
+        lines.extend(crate::scanner_extra5::run_extra_scan5());
         show_lines(lines);
     }
 
@@ -221,7 +224,7 @@ mod app {
             };
             if RegisterClassW(&wc) == 0 { return; }
 
-            let title = wide("QuietGuard 0.9 - PUP / 시스템 변경 점검");
+            let title = wide("QuietGuard 0.10 - PUP / 시스템 변경 점검");
             let hwnd = CreateWindowExW(
                 0, class_name.as_ptr(), title.as_ptr(), WS_OVERLAPPEDWINDOW | WS_VISIBLE,
                 CW_USEDEFAULT, CW_USEDEFAULT, 1040, 660,
