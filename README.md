@@ -2,7 +2,7 @@
 
 QuietGuard is a low-memory Windows companion to Microsoft Defender focused on PUP/PUA, unwanted persistence, adware/browser hijacking and suspicious system configuration changes rather than traditional antivirus replacement.
 
-## QuietGuard 1.4
+## QuietGuard 1.5
 
 ### Always available without user setup
 
@@ -10,11 +10,25 @@ QuietGuard is a low-memory Windows companion to Microsoft Defender focused on PU
 - Low-memory native change watcher
 - QuietGuard heuristic rule DB
 - UncheckyAds, FadeMind add.Risk, KADhosts, StevenBlack and YousList public/regional domain intelligence
-- Automatic background DB refresh with local disk indexes
+- Manual DB refresh with local disk indexes
+
+### Opt-in automation buttons
+
+All automatic behavior is implemented but **off by default**. The user enables each feature separately from the GUI.
+
+- **윈도우 자동실행 설정**: toggles a current-user `HKCU\...\Run` entry for QuietGuard.
+- **감시 자동시작 설정**: independently toggles a current-user `HKCU\...\Run` entry that starts the low-memory `--watch` process at login.
+- **DB 자동업데이트 설정**: toggles a current-user Task Scheduler job that invokes `--update-data-silent` every 6 hours.
+
+The scheduler interval is fixed rather than adaptive. Source-side due checks avoid unnecessary downloads: ThreatFox/URLhaus are refreshed at most every 6 hours; public PUP/domain feeds, YousList and optional ClamAV checks are refreshed at most every 24 hours. QuietGuard rule metadata is checked by the scheduled 6-hour pass.
+
+Manual DB updates run on a worker thread so the GUI remains responsive. A named Windows mutex prevents two QuietGuard DB update processes from running at the same time.
 
 ### Optional abuse.ch intelligence
 
-If an abuse.ch Auth-Key is later supplied through `QUIETGUARD_ABUSECH_AUTH_KEY` or `%LOCALAPPDATA%\QuietGuard\secrets.conf`, ThreatFox and URLhaus caches automatically activate. Without a key they are simply skipped.
+If an abuse.ch Auth-Key is supplied through `QUIETGUARD_ABUSECH_AUTH_KEY` or `%LOCALAPPDATA%\QuietGuard\secrets.conf`, ThreatFox and URLhaus caches activate. Without a key they are simply skipped.
+
+ThreatFox uses the Community API recent IOC query with a fallback compatibility path. The fallback is only used if the primary ThreatFox request fails, preventing duplicate successful ThreatFox refreshes.
 
 ### Optional ClamAV PUA bridge
 
@@ -49,7 +63,7 @@ Findings are advisory. Unusual or PUA-labelled software is not automatically del
 
 ## Baseline and updates
 
-**기준 저장/기준 비교** provides accepted-state change comparison. The GUI launches a short-lived hidden updater for QuietGuard rules and external DB caches. Results are written under `%LOCALAPPDATA%\QuietGuard`.
+**기준 저장/기준 비교** provides accepted-state change comparison. Update results and logs are stored under `%LOCALAPPDATA%\QuietGuard`.
 
 QuietGuard's own rule file is downloaded over HTTPS and verified against the SHA-256 in `rules/version.json`. An independent publisher-signature layer remains a hardening target.
 
@@ -61,8 +75,8 @@ See `docs/INTELLIGENCE.md` for source and privacy details.
 cargo build --release
 ```
 
-GitHub Actions validates feature branches on `windows-latest` with `cargo check --release`, `cargo build --release`, packaging and artifact upload before merge. The repository also contains a release workflow that publishes the validated Windows x64 package for v1.4.0.
+GitHub Actions validates feature branches on `windows-latest` with `cargo check --release`, `cargo build --release`, packaging and artifact upload before merge.
 
 ## Status
 
-QuietGuard 1.4 is a defensive, read-only prototype. It complements Microsoft Defender and does not replace antivirus protection. It currently does not automatically delete, quarantine or block findings.
+QuietGuard 1.5 is a defensive, read-only prototype. It complements Microsoft Defender and does not replace antivirus protection. It currently does not automatically delete, quarantine or block findings.

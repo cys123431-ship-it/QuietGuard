@@ -1,17 +1,46 @@
 use std::cmp::Ordering;
 use std::env;
+use std::ffi::c_void;
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::ptr::null_mut;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 const RECORD_LEN: u64 = 17;
 const THREATFOX_INTERVAL_SECS: u64 = 6 * 60 * 60;
+const ERROR_ALREADY_EXISTS: u32 = 183;
+const UPDATE_MUTEX_NAME: &str = "Local\\QuietGuardDbUpdateMutex";
+
+type HANDLE = *mut c_void;
+type LPCWSTR = *const u16;
+
+#[link(name = "kernel32")]
+extern "system" {
+    fn CreateMutexW(lpMutexAttributes: *mut c_void, bInitialOwner: i32, lpName: LPCWSTR) -> HANDLE;
+    fn GetLastError() -> u32;
+    fn ReleaseMutex(hMutex: HANDLE) -> i32;
+    fn CloseHandle(hObject: HANDLE) -> i32;
+}
+
+struct UpdateGuard(HANDLE);
+impl Drop for UpdateGuard {
+    fn drop(&mut self) {
+        unsafe {
+            ReleaseMutex(self.0);
+            CloseHandle(self.0);
+        }
+    }
+}
 
 pub fn update_all(force_public_intel: bool) -> Vec<String> {
+    let Some(_guard) = try_update_guard() else {
+        return vec!["[정보] 다른 QuietGuard DB 업데이트가 이미 진행 중입니다. 중복 실행을 건너뜁니다.".into()];
+    };
+
     let mut out = crate::updater::update_rules();
     out.push(String::new());
     out.extend(crate::intel::update_public_feeds(force_public_intel));
@@ -20,17 +49,20 @@ pub fn update_all(force_public_intel: bool) -> Vec<String> {
     out.push(String::new());
 
     let mut keyed = crate::keyed_intel::update_keyed_feeds(force_public_intel);
-    match update_threatfox_compat(force_public_intel) {
-        Ok(Some(count)) => {
-            keyed.retain(|line| !line.starts_with("[경고] ThreatFox 업데이트 실패:"));
-            keyed.push(format!("[완료] ThreatFox 최근 IOC 도메인 {}개", count));
-            keyed.retain(|line| !line.starts_with("[DB] ThreatFox:"));
-            keyed.push(format!("[DB] ThreatFox: {}개 / recent malware IOC / payload delivery / C2", count));
-        }
-        Ok(None) => {}
-        Err(e) => {
-            if !keyed.iter().any(|line| line.starts_with("[경고] ThreatFox 업데이트 실패:")) {
-                keyed.push(format!("[경고] ThreatFox 업데이트 실패: {} (기존 캐시 유지)", e));
+    let primary_threatfox_failed = keyed.iter().any(|line| line.starts_with("[경고] ThreatFox 업데이트 실패:"));
+    if primary_threatfox_failed {
+        match update_threatfox_compat(force_public_intel) {
+            Ok(Some(count)) => {
+                keyed.retain(|line| !line.starts_with("[경고] ThreatFox 업데이트 실패:"));
+                keyed.push(format!("[완료] ThreatFox 최근 IOC 도메인 {}개", count));
+                keyed.retain(|line| !line.starts_with("[DB] ThreatFox:"));
+                keyed.push(format!("[DB] ThreatFox: {}개 / recent malware IOC / payload delivery / C2", count));
+            }
+            Ok(None) => {}
+            Err(e) => {
+                if !keyed.iter().any(|line| line.starts_with("[경고] ThreatFox 업데이트 실패:")) {
+                    keyed.push(format!("[경고] ThreatFox 업데이트 실패: {} (기존 캐시 유지)", e));
+                }
             }
         }
     }
@@ -50,7 +82,7 @@ pub fn spawn_background_update() -> String {
     cmd.arg("--update-data-silent");
     cmd.creation_flags(CREATE_NO_WINDOW);
     match cmd.spawn() {
-        Ok(_) => "[정보] QuietGuard/공개/지역/선택형 DB 업데이트 확인을 백그라운드에서 시작했습니다.".into(),
+        Ok(_) => "[정보] QuietGuard DB 업데이트 확인을 백그라운드에서 시작했습니다.".into(),
         Err(e) => format!("[정보] 자동 DB 업데이트 시작 실패: {}", e),
     }
 }
@@ -60,6 +92,19 @@ pub fn update_silent() {
     let dir = data_dir();
     let _ = fs::create_dir_all(&dir);
     let _ = fs::write(dir.join("update.log"), lines.join("\n") + "\n");
+}
+
+fn try_update_guard() -> Option<UpdateGuard> {
+    unsafe {
+        let name = wide(UPDATE_MUTEX_NAME);
+        let handle = CreateMutexW(null_mut(), 1, name.as_ptr());
+        if handle.is_null() { return None; }
+        if GetLastError() == ERROR_ALREADY_EXISTS {
+            CloseHandle(handle);
+            return None;
+        }
+        Some(UpdateGuard(handle))
+    }
 }
 
 fn update_threatfox_compat(force: bool) -> Result<Option<usize>, String> {
@@ -72,11 +117,8 @@ fn update_threatfox_compat(force: bool) -> Result<Option<usize>, String> {
     let destination = raw_dir.join("threatfox.json");
     let dest = ps_quote(&destination.to_string_lossy());
 
-    // ThreatFox's documented Community API uses an Auth-Key header and a
-    // POST body {"query":"get_iocs","days":7}. Invoke-RestMethod avoids
-    // the Windows PowerShell Invoke-WebRequest/OutFile failure seen on some PCs.
     let script = format!(
-        "$ErrorActionPreference='Stop';$h=@{{'Auth-Key'=$env:QUIETGUARD_ABUSECH_AUTH_KEY}};$b='{{\"query\":\"get_iocs\",\"days\":7}}';$r=Invoke-RestMethod -Method POST -Headers $h -ContentType 'application/json' -Body $b -Uri 'https://threatfox-api.abuse.ch/api/v1/';$r|ConvertTo-Json -Depth 20 -Compress|Set-Content -LiteralPath '{}' -Encoding UTF8;",
+        "$ErrorActionPreference='Stop';$h=@{{'Auth-Key'=$env:QUIETGUARD_ABUSECH_AUTH_KEY}};$b='{{\"query\":\"get_iocs\",\"days\":7}}';$r=Invoke-RestMethod -TimeoutSec 45 -Method POST -Headers $h -ContentType 'application/json' -Body $b -Uri 'https://threatfox-api.abuse.ch/api/v1/';$r|ConvertTo-Json -Depth 20 -Compress|Set-Content -LiteralPath '{}' -Encoding UTF8;",
         dest
     );
     run_powershell_with_key(&script, &key)?;
@@ -250,4 +292,5 @@ fn unix_now() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
 
+fn wide(s: &str) -> Vec<u16> { s.encode_utf16().chain(std::iter::once(0)).collect() }
 fn ps_quote(text: &str) -> String { text.replace('\'', "''") }

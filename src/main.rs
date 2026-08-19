@@ -38,6 +38,8 @@ mod data_update;
 mod monitor;
 #[cfg(target_os = "windows")]
 mod baseline;
+#[cfg(target_os = "windows")]
+mod automation;
 
 #[cfg(not(target_os = "windows"))]
 fn main() { println!("QuietGuard targets Windows 10/11."); }
@@ -47,6 +49,8 @@ mod app {
     use std::ffi::c_void;
     use std::mem::zeroed;
     use std::ptr::{null, null_mut};
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     type HINSTANCE = *mut c_void;
     type HWND = *mut c_void;
@@ -93,6 +97,7 @@ mod app {
     const SW_SHOW: i32 = 5;
     const WM_DESTROY: UINT = 0x0002;
     const WM_COMMAND: UINT = 0x0111;
+    const WM_APP_UPDATE_DONE: UINT = 0x8001;
     const LB_ADDSTRING: UINT = 0x0180;
     const LB_RESETCONTENT: UINT = 0x0184;
     const COLOR_WINDOW: isize = 5;
@@ -104,8 +109,13 @@ mod app {
     const ID_LOG: usize = 1005;
     const ID_BASELINE_SAVE: usize = 1006;
     const ID_BASELINE_COMPARE: usize = 1007;
+    const ID_STARTUP_TOGGLE: usize = 1008;
+    const ID_MONITOR_AUTO_TOGGLE: usize = 1009;
+    const ID_DB_AUTO_TOGGLE: usize = 1010;
 
     static mut LISTBOX: HWND = null_mut();
+    static UPDATE_RUNNING: AtomicBool = AtomicBool::new(false);
+    static UPDATE_RESULT: Mutex<Option<Vec<String>>> = Mutex::new(None);
 
     #[link(name = "user32")]
     extern "system" {
@@ -122,6 +132,7 @@ mod app {
         fn PostQuitMessage(nExitCode: i32);
         fn LoadCursorW(hInstance: HINSTANCE, lpCursorName: LPCWSTR) -> HCURSOR;
         fn SendMessageW(hWnd: HWND, Msg: UINT, wParam: WPARAM, lParam: LPARAM) -> LRESULT;
+        fn PostMessageW(hWnd: HWND, Msg: UINT, wParam: WPARAM, lParam: LPARAM) -> i32;
     }
     #[link(name = "kernel32")]
     extern "system" { fn GetModuleHandleW(lpModuleName: LPCWSTR) -> HINSTANCE; }
@@ -149,22 +160,52 @@ mod app {
         lines.extend(crate::safe_browsing::scan_opt_in());
         show_lines(lines);
     }
-    unsafe fn wnd_action(id: usize) {
+    unsafe fn start_update_async(hwnd: HWND) {
+        if UPDATE_RUNNING.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire).is_err() {
+            show_lines(vec!["[정보] DB 업데이트가 이미 진행 중입니다. 중복 실행하지 않습니다.".into()]);
+            return;
+        }
+        show_lines(vec![
+            "[정보] DB 업데이트를 백그라운드에서 시작했습니다.".into(),
+            "창은 계속 사용할 수 있으며 완료되면 결과가 자동 표시됩니다.".into(),
+        ]);
+        let target = hwnd as usize;
+        std::thread::spawn(move || {
+            let lines = crate::data_update::update_all(true);
+            if let Ok(mut slot) = UPDATE_RESULT.lock() { *slot = Some(lines); }
+            UPDATE_RUNNING.store(false, Ordering::Release);
+            unsafe { PostMessageW(target as HWND, WM_APP_UPDATE_DONE, 0, 0); }
+        });
+    }
+    unsafe fn show_automation_result(mut lines: Vec<String>) {
+        lines.push(String::new());
+        lines.extend(crate::automation::status_lines());
+        show_lines(lines);
+    }
+    unsafe fn wnd_action(hwnd: HWND, id: usize) {
         match id {
             ID_SCAN => run_scan(),
-            ID_UPDATE => show_lines(crate::data_update::update_all(true)),
-            ID_WATCH_START => show_lines(vec![crate::monitor::start_background(),
-                "변경 이벤트는 %LOCALAPPDATA%\\QuietGuard\\events.log 에 기록됩니다.".into()]),
+            ID_UPDATE => start_update_async(hwnd),
+            ID_WATCH_START => show_lines(vec![crate::monitor::start_background(), "변경 이벤트는 %LOCALAPPDATA%\\QuietGuard\\events.log 에 기록됩니다.".into()]),
             ID_WATCH_STOP => show_lines(vec![crate::monitor::request_stop()]),
             ID_LOG => show_lines(crate::baseline::recent_events(120)),
             ID_BASELINE_SAVE => show_lines(crate::baseline::save_baseline()),
             ID_BASELINE_COMPARE => show_lines(crate::baseline::compare_baseline()),
+            ID_STARTUP_TOGGLE => show_automation_result(crate::automation::toggle_windows_startup()),
+            ID_MONITOR_AUTO_TOGGLE => show_automation_result(crate::automation::toggle_monitor_autostart()),
+            ID_DB_AUTO_TOGGLE => show_automation_result(crate::automation::toggle_db_autoupdate()),
             _ => {}
         }
     }
     unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         match msg {
-            WM_COMMAND => { wnd_action(wparam & 0xFFFF); return 0; }
+            WM_COMMAND => { wnd_action(hwnd, wparam & 0xFFFF); return 0; }
+            WM_APP_UPDATE_DONE => {
+                if let Ok(mut slot) = UPDATE_RESULT.lock() {
+                    if let Some(lines) = slot.take() { show_lines(lines); }
+                }
+                return 0;
+            }
             WM_DESTROY => { PostQuitMessage(0); return 0; }
             _ => {}
         }
@@ -195,17 +236,20 @@ mod app {
             make_button(hwnd, instance, 610, 18, 130, ID_LOG, "감시 로그");
             make_button(hwnd, instance, 20, 62, 130, ID_BASELINE_SAVE, "기준 저장");
             make_button(hwnd, instance, 160, 62, 130, ID_BASELINE_COMPARE, "기준 비교");
+            make_button(hwnd, instance, 300, 62, 160, ID_STARTUP_TOGGLE, "윈도우 자동실행 설정");
+            make_button(hwnd, instance, 470, 62, 160, ID_MONITOR_AUTO_TOGGLE, "감시 자동시작 설정");
+            make_button(hwnd, instance, 640, 62, 170, ID_DB_AUTO_TOGGLE, "DB 자동업데이트 설정");
             let listbox = wide("LISTBOX");
             LISTBOX = CreateWindowExW(0, listbox.as_ptr(), null(), WS_CHILD | WS_VISIBLE | WS_BORDER | WS_VSCROLL | LBS_NOINTEGRALHEIGHT,
                 20, 112, 980, 490, hwnd, null_mut(), instance, null_mut());
-            add_line("QuietGuard 준비됨 - 시스템 점검, DB 업데이트, 실시간 감시와 기준 비교를 사용할 수 있습니다.");
+            add_line("QuietGuard 준비됨 - 자동 실행/자동 감시/자동 DB 업데이트는 기본적으로 꺼져 있으며 각 설정 버튼으로 켤 수 있습니다.");
             add_line("Defender를 대체하지 않으며 PUP/광고프로그램/하이재킹 및 시스템 변조 흔적에 집중합니다.");
             add_line(&crate::keyed_intel::abusech_config_status());
             add_line(&crate::safe_browsing::status_line());
             add_line(&crate::clam_bridge::status_line());
             add_line(if crate::monitor::is_running() { "실시간 감시 상태: 실행 중" } else { "실시간 감시 상태: 중지됨" });
+            for line in crate::automation::status_lines() { add_line(&line); }
             ShowWindow(hwnd, SW_SHOW); UpdateWindow(hwnd);
-            add_line(&crate::data_update::spawn_background_update());
             let mut msg: MSG = zeroed();
             while GetMessageW(&mut msg, null_mut(), 0, 0) > 0 { TranslateMessage(&msg); DispatchMessageW(&msg); }
         }
