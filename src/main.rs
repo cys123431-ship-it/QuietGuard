@@ -25,6 +25,8 @@ mod updater;
 #[cfg(target_os = "windows")]
 mod intel;
 #[cfg(target_os = "windows")]
+mod keyed_intel;
+#[cfg(target_os = "windows")]
 mod data_update;
 #[cfg(target_os = "windows")]
 mod monitor;
@@ -237,6 +239,7 @@ mod app {
             add_line("QuietGuard 준비됨 - 시스템 점검, DB 업데이트, 실시간 감시와 기준 비교를 사용할 수 있습니다.");
             add_line("Defender를 대체하지 않으며 PUP/광고프로그램/하이재킹 및 시스템 변조 흔적에 집중합니다.");
             add_line("공개 PUP/애드웨어 도메인 DB는 상주 메모리에 적재하지 않고 디스크 인덱스로 조회합니다.");
+            add_line(&crate::keyed_intel::abusech_config_status());
             add_line(if crate::monitor::is_running() { "실시간 감시 상태: 실행 중" } else { "실시간 감시 상태: 중지됨" });
             ShowWindow(hwnd, SW_SHOW);
             UpdateWindow(hwnd);

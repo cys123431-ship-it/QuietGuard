@@ -11,42 +11,38 @@ QuietGuard keeps external intelligence separate from its MIT-licensed source cod
 | KADhosts | Fraud/adware/scam indicators | CC BY-SA 4.0 |
 | StevenBlack Unified Hosts | Broad adware/malware domain context | Aggregates multiple upstream lists with differing licenses; local runtime cache only |
 
-QuietGuard records source, category and license notes in `%LOCALAPPDATA%\QuietGuard\intel\*.meta`.
-
-## Update behavior
-
-- GUI startup launches a short-lived hidden updater process.
-- Public intelligence is refreshed no more than once every 24 hours unless the user presses **DB 업데이트**.
-- Each source is downloaded over HTTPS.
-- A newly downloaded source is parsed into a temporary fixed-width index and only replaces the previous local index after parsing succeeds.
-- If one source fails, the other sources continue to update and the previous index for the failed source remains usable.
-- Raw downloaded list files are removed after indexing.
-- The always-on watcher never downloads these lists.
+Public intelligence refreshes at most every 24 hours unless **DB 업데이트** is pressed. Raw list files are removed after indexing, and failed sources retain their prior local index.
 
 ## Low-memory index format
 
-Each normalized domain is hashed with FNV-1a 64-bit. Per-source hashes are sorted and deduplicated, then stored as 16 lowercase hexadecimal characters plus a newline (`17 bytes` per record). Lookups use fixed-offset binary search against the file instead of loading the full database into memory.
+Normalized domains are hashed with FNV-1a 64-bit, sorted and stored as fixed-width 17-byte records. QuietGuard uses binary search directly on disk instead of loading the full database into resident memory. FNV is only a compact lookup key, not an authenticity mechanism.
 
-FNV is used only as a compact local lookup key, not as a cryptographic authenticity check. Source transport/authenticity is a separate concern.
+## Optional abuse.ch integration (implemented in 1.2)
 
-## Optional sources prepared for later credential activation
+One abuse.ch Auth-Key can enable both adapters. QuietGuard first checks the `QUIETGUARD_ABUSECH_AUTH_KEY` environment variable, then `%LOCALAPPDATA%\QuietGuard\secrets.conf` for `abusech_auth_key=...`. No secret is stored in the repository or placed literally in the PowerShell command line.
+
+If no key exists, these adapters are skipped without affecting normal operation.
 
 ### ThreatFox
 
-ThreatFox Community API is free under its fair-use terms but currently requires an abuse.ch Auth-Key. It provides recent IOCs and domain/payload-delivery/C2 information. IOCs older than six months are expired from current API/export results to reduce false positives.
+QuietGuard requests the recent 7-day IOC set, extracts domain-like IOCs and stores them in `%LOCALAPPDATA%\QuietGuard\intel\keyed\threatfox.f64`. The cache is refreshed at most every six hours unless a forced DB update is requested.
 
 ### URLhaus
 
-URLhaus Community API also requires an abuse.ch Auth-Key. Its recent/full datasets can supplement malicious URL/domain and payload-hash context. The service documents a `recent.csv` export and generates data frequently, but QuietGuard should cache it rather than request it excessively.
+QuietGuard downloads the authenticated recent CSV dataset, extracts URL hostnames and stores them in `%LOCALAPPDATA%\QuietGuard\intel\keyed\urlhaus.f64`. The same six-hour cache interval applies.
 
-### Google Safe Browsing v5
+Both caches keep their last known-good index when an API request or parse fails. Scanner results identify ThreatFox/URLhaus matches separately from the broader PUP/adware lists.
 
-Google Safe Browsing includes an `UNWANTED_SOFTWARE` threat type, which is directly relevant to PUP/PUA-style URL checks. The Safe Browsing API is for non-commercial use and requires Google API access. It is better suited to targeted URL reputation queries than to QuietGuard's no-key bulk local database.
+A template is provided at `config/secrets.conf.example`; the user only needs to copy/fill it if they later want these optional services.
 
-### ClamAV
+## Google Safe Browsing v5 (future opt-in)
 
-ClamAV supports PUA detection and distributes digitally signed CVD signature databases maintained by Cisco Talos. FreshClam is the supported updater. QuietGuard can add an optional on-demand ClamAV bridge when the engine is present, but it should not turn ClamAV into another always-on service because QuietGuard's design goal is to remain a low-memory Defender companion.
+Google Safe Browsing includes an `UNWANTED_SOFTWARE` threat type and is relevant to targeted PUP/PUA URL reputation checks. It requires Google API access and is intended for non-commercial use, so QuietGuard will keep it disabled unless explicitly configured.
+
+## ClamAV (future optional bridge)
+
+ClamAV supports PUA detection and distributes signed signature databases updated by FreshClam. QuietGuard can invoke it on-demand when present without making it another always-on engine; this preserves QuietGuard's low-memory Defender-companion design.
 
 ## Privacy
 
-The enabled no-key feeds are bulk downloads. QuietGuard does not upload local filenames, browser history, scan results or user documents to those feed providers. Future query-style services such as Safe Browsing or hash reputation APIs must remain opt-in because queries can reveal information about the URL/hash being checked.
+The default no-key feeds are bulk downloads and do not receive local filenames, scan results or user documents. ThreatFox/URLhaus bulk/cache refresh also avoids per-file lookups. Future query-style services such as Google Safe Browsing should remain opt-in because URL queries reveal information about what is being checked.

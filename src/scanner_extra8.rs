@@ -1,18 +1,19 @@
-use crate::intel;
+use crate::{intel, keyed_intel};
 use std::collections::BTreeSet;
 use std::env;
 use std::fs;
 use std::os::windows::process::CommandExt;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 pub fn run_extra_scan8() -> Vec<String> {
-    let mut out = Vec::with_capacity(96);
-    out.push("--- 공개 PUP/애드웨어 도메인 DB 대조 ---".into());
+    let mut out = Vec::with_capacity(112);
+    out.push("--- 공개 PUP/애드웨어·선택형 위협 DB 대조 ---".into());
     out.extend(intel::status_lines());
-    if !intel::indexes_ready() {
+    out.extend(keyed_intel::status_lines());
+    if !intel::indexes_ready() && !keyed_intel::keyed_ready() {
         return out;
     }
 
@@ -23,9 +24,9 @@ pub fn run_extra_scan8() -> Vec<String> {
     scan_task_urls(&mut out, &mut seen);
 
     if seen.is_empty() {
-        out.push("[정상] 현재 확인한 설정/브라우저 영역에서 공개 DB 일치 도메인이 없습니다.".into());
+        out.push("[정상] 현재 확인한 설정/브라우저 영역에서 외부 DB 일치 도메인이 없습니다.".into());
     } else {
-        out.push(format!("[정보] 공개 DB와 일치한 고유 도메인 {}개", seen.len()));
+        out.push(format!("[정보] 외부 DB와 일치한 고유 소스/도메인 {}개", seen.len()));
     }
     out
 }
@@ -39,12 +40,9 @@ fn scan_registry_urls(out: &mut Vec<String>, seen: &mut BTreeSet<String>) {
         ("Edge 사용자 정책", "HKCU\\Software\\Policies\\Microsoft\\Edge"),
         ("Edge 시스템 정책", "HKLM\\Software\\Policies\\Microsoft\\Edge"),
     ];
-
     for &(label, key) in KEYS {
         let text = hidden_output("reg.exe", &["query", key, "/s"]);
-        if !text.is_empty() {
-            inspect_text(label, &text, out, seen, 20);
-        }
+        if !text.is_empty() { inspect_text(label, &text, out, seen, 20); }
     }
 }
 
@@ -55,7 +53,6 @@ fn scan_browser_profiles(out: &mut Vec<String>, seen: &mut BTreeSet<String>) {
         ("Chrome", "Google\\Chrome\\User Data"),
         ("Edge", "Microsoft\\Edge\\User Data"),
     ];
-
     for &(browser, relative) in BROWSERS {
         let base = root.join(relative);
         let Ok(entries) = fs::read_dir(&base) else { continue; };
@@ -79,7 +76,6 @@ fn scan_extension_manifests(out: &mut Vec<String>, seen: &mut BTreeSet<String>) 
         ("Chrome", "Google\\Chrome\\User Data"),
         ("Edge", "Microsoft\\Edge\\User Data"),
     ];
-
     for &(browser, relative) in BROWSERS {
         let base = root.join(relative);
         let Ok(profiles) = fs::read_dir(&base) else { continue; };
@@ -92,8 +88,7 @@ fn scan_extension_manifests(out: &mut Vec<String>, seen: &mut BTreeSet<String>) 
                 if !ext.path().is_dir() { continue; }
                 let Ok(versions) = fs::read_dir(ext.path()) else { continue; };
                 for version in versions.flatten().take(8) {
-                    let manifest = version.path().join("manifest.json");
-                    if let Ok(text) = fs::read_to_string(manifest) {
+                    if let Ok(text) = fs::read_to_string(version.path().join("manifest.json")) {
                         inspect_text(&format!("{} {} 확장", browser, name), &text, out, seen, 25);
                     }
                 }
@@ -104,28 +99,24 @@ fn scan_extension_manifests(out: &mut Vec<String>, seen: &mut BTreeSet<String>) 
 
 fn scan_task_urls(out: &mut Vec<String>, seen: &mut BTreeSet<String>) {
     let text = hidden_output("schtasks.exe", &["/query", "/fo", "LIST", "/v"]);
-    if !text.is_empty() {
-        inspect_text("예약 작업", &text, out, seen, 20);
-    }
+    if !text.is_empty() { inspect_text("예약 작업", &text, out, seen, 20); }
 }
 
 fn inspect_text(label: &str, text: &str, out: &mut Vec<String>, seen: &mut BTreeSet<String>, max_new: usize) {
-    let candidates = candidate_tokens(text);
     let mut emitted = 0usize;
-    for candidate in candidates {
-        let hits = intel::lookup_domain(&candidate);
-        for hit in hits {
+    for candidate in candidate_tokens(text) {
+        for hit in intel::lookup_domain(&candidate) {
             let key = format!("{}|{}", hit.source, hit.matched_domain);
             if !seen.insert(key) { continue; }
-            let prefix = if hit.source == "UncheckyAds" || hit.source == "KADhosts" {
-                "[주의-외부DB]"
-            } else {
-                "[확인-외부DB]"
-            };
-            out.push(format!(
-                "{} {}: {} | {} ({})",
-                prefix, label, hit.matched_domain, hit.source, hit.category
-            ));
+            let prefix = if hit.source == "UncheckyAds" || hit.source == "KADhosts" { "[주의-외부DB]" } else { "[확인-외부DB]" };
+            out.push(format!("{} {}: {} | {} ({})", prefix, label, hit.matched_domain, hit.source, hit.category));
+            emitted += 1;
+            if emitted >= max_new { return; }
+        }
+        for hit in keyed_intel::lookup_domain(&candidate) {
+            let key = format!("{}|{}", hit.source, hit.matched_domain);
+            if !seen.insert(key) { continue; }
+            out.push(format!("[주의-위협DB] {}: {} | {} ({})", label, hit.matched_domain, hit.source, hit.category));
             emitted += 1;
             if emitted >= max_new { return; }
         }
@@ -134,30 +125,21 @@ fn inspect_text(label: &str, text: &str, out: &mut Vec<String>, seen: &mut BTree
 
 fn candidate_tokens(text: &str) -> Vec<String> {
     let mut set = BTreeSet::new();
-
-    // First harvest explicit URLs.
     for scheme in ["http://", "https://", "ftp://"] {
         let mut offset = 0usize;
         while let Some(pos) = text[offset..].find(scheme) {
             let start = offset + pos;
             let rest = &text[start..];
-            let end = rest.find(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | ')' | ']' | '}' | ','))
-                .unwrap_or(rest.len());
-            if end > scheme.len() {
-                set.insert(rest[..end].trim_end_matches(|c: char| matches!(c, '.' | ';' | ':')).to_string());
-            }
+            let end = rest.find(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | ')' | ']' | '}' | ',')).unwrap_or(rest.len());
+            if end > scheme.len() { set.insert(rest[..end].trim_end_matches(|c: char| matches!(c, '.' | ';' | ':')).to_string()); }
             offset = start + scheme.len();
             if offset >= text.len() { break; }
         }
     }
-
-    // Registry/proxy forms often contain host:port without a scheme.
     for raw in text.split_whitespace() {
         for piece in raw.split(|c| matches!(c, ';' | ',' | '=' | '|')) {
             let candidate = piece.trim_matches(|c: char| matches!(c, '"' | '\'' | '(' | ')' | '[' | ']' | '{' | '}' | '<' | '>' | ':' | '.'));
-            if candidate.contains('.') && candidate.len() >= 4 && candidate.len() <= 300 {
-                set.insert(candidate.to_string());
-            }
+            if candidate.contains('.') && candidate.len() >= 4 && candidate.len() <= 300 { set.insert(candidate.to_string()); }
         }
     }
     set.into_iter().collect()
@@ -167,27 +149,17 @@ fn hidden_output(program: &str, args: &[&str]) -> String {
     let mut cmd = Command::new(program);
     cmd.args(args);
     cmd.creation_flags(CREATE_NO_WINDOW);
-    match cmd.output() {
-        Ok(o) => decode_output(&o.stdout),
-        Err(_) => String::new(),
-    }
+    match cmd.output() { Ok(o) => decode_output(&o.stdout), Err(_) => String::new() }
 }
 
 fn decode_output(bytes: &[u8]) -> String {
     if bytes.starts_with(&[0xFF, 0xFE]) {
-        let u16s: Vec<u16> = bytes[2..].chunks_exact(2)
-            .map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+        let u16s: Vec<u16> = bytes[2..].chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
         return String::from_utf16_lossy(&u16s);
     }
     if bytes.starts_with(&[0xFE, 0xFF]) {
-        let u16s: Vec<u16> = bytes[2..].chunks_exact(2)
-            .map(|c| u16::from_be_bytes([c[0], c[1]])).collect();
+        let u16s: Vec<u16> = bytes[2..].chunks_exact(2).map(|c| u16::from_be_bytes([c[0], c[1]])).collect();
         return String::from_utf16_lossy(&u16s);
     }
     String::from_utf8_lossy(bytes).into_owned()
-}
-
-#[allow(dead_code)]
-fn is_regular_file(path: &Path) -> bool {
-    path.metadata().map(|m| m.is_file()).unwrap_or(false)
 }
