@@ -2,7 +2,9 @@
 
 QuietGuard is a clean-room Windows PUP/system-change monitor. It does not copy Malware Zero code or databases.
 
-## Implemented in 0.5
+## Implemented in 0.6
+
+### Manual system inspection
 
 - Hosts custom-entry inspection
 - Windows proxy state
@@ -29,14 +31,37 @@ QuietGuard is a clean-room Windows PUP/system-change monitor. It does not copy M
 - Uninstall/QuietUninstall command inspection
 - Browser shortcut target/argument inspection
 - IE ElevationPolicy AppName/AppPath inspection
+
+### Rule/update infrastructure
+
 - External heuristic rule file with built-in fallback rules
 - Per-user rule database update under `%LOCALAPPDATA%\QuietGuard\rules`
 - HTTPS GitHub rule retrieval with SHA-256 manifest verification
 - Portable Windows CI artifact containing the executable and starter rules
 
+### Low-memory real-time watcher
+
+Registry notifications are armed for available important locations including:
+
+- HKCU/HKLM Run and RunOnce
+- Windows proxy settings
+- HKCU/HKLM Command Processor
+- Winlogon
+- Services/drivers subtree
+- Chrome/Edge user and system policy keys when present
+
+A low-frequency metadata check also records changes to:
+
+- Hosts
+- User/all-users Startup folders
+- Windows scheduled-task store
+
+Events are written to `%LOCALAPPDATA%\QuietGuard\events.log`. The watcher is detection/logging only and does not modify the system.
+
 ## Next coverage targets
 
-- Low-memory baseline/change watcher for important persistence/configuration locations
+- Baseline snapshots and change comparison details
+- Event-log viewer in the GUI
 - Driver/service subkey heuristics beyond ImagePath/ServiceDll
 - Winsock/LSP baselining and provider allowlisting
 - Browser notification abuse
