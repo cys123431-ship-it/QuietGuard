@@ -6,8 +6,7 @@ use std::path::PathBuf;
 pub fn save_baseline() -> Vec<String> {
     let mut out = Vec::with_capacity(8);
     out.push("QuietGuard 기준 상태 저장".into());
-    let current = collect_scan_lines();
-    let normalized = normalize(&current);
+    let normalized = normalize(&collect_scan_lines());
     let path = baseline_path();
     if let Some(parent) = path.parent() {
         if let Err(e) = fs::create_dir_all(parent) {
@@ -38,7 +37,8 @@ pub fn compare_baseline() -> Vec<String> {
             return out;
         }
     };
-    let baseline: BTreeSet<String> = baseline_text.lines().map(str::trim).filter(|l| !l.is_empty()).map(ToOwned::to_owned).collect();
+    let baseline: BTreeSet<String> = baseline_text.lines().map(str::trim)
+        .filter(|l| !l.is_empty()).map(ToOwned::to_owned).collect();
     let current = normalize(&collect_scan_lines());
     let added: Vec<&String> = current.difference(&baseline).collect();
     let removed: Vec<&String> = baseline.difference(&current).collect();
@@ -78,6 +78,7 @@ fn collect_scan_lines() -> Vec<String> {
     all.extend(crate::scanner_extra5::run_extra_scan5());
     all.extend(crate::scanner_extra6::run_extra_scan6());
     all.extend(crate::scanner_extra7::run_extra_scan7());
+    all.extend(crate::scanner_extra8::run_extra_scan8());
     all
 }
 
@@ -86,6 +87,7 @@ fn normalize(lines: &[String]) -> BTreeSet<String> {
         .filter(|s| !s.starts_with("QuietGuard "))
         .filter(|s| !s.starts_with("점검 완료"))
         .filter(|s| !s.starts_with("---"))
+        .filter(|s| !s.starts_with("[정보] 공개 DB 마지막 갱신:"))
         .map(ToOwned::to_owned).collect()
 }
 
