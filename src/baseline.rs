@@ -38,35 +38,19 @@ pub fn compare_baseline() -> Vec<String> {
             return out;
         }
     };
-
-    let baseline: BTreeSet<String> = baseline_text.lines()
-        .map(str::trim)
-        .filter(|l| !l.is_empty())
-        .map(ToOwned::to_owned)
-        .collect();
+    let baseline: BTreeSet<String> = baseline_text.lines().map(str::trim).filter(|l| !l.is_empty()).map(ToOwned::to_owned).collect();
     let current = normalize(&collect_scan_lines());
-
     let added: Vec<&String> = current.difference(&baseline).collect();
     let removed: Vec<&String> = baseline.difference(&current).collect();
-
     if added.is_empty() && removed.is_empty() {
         out.push("[정상] 저장된 기준 상태와 의미 있는 차이가 없습니다.".into());
         return out;
     }
-
     out.push(format!("[변경] 새 항목 {}개 / 사라진 항목 {}개", added.len(), removed.len()));
-    for line in added.iter().take(30) {
-        out.push(format!("[추가] {}", line));
-    }
-    if added.len() > 30 {
-        out.push(format!("[정보] 추가 항목 {}개 더 있음", added.len() - 30));
-    }
-    for line in removed.iter().take(20) {
-        out.push(format!("[삭제/변경] {}", line));
-    }
-    if removed.len() > 20 {
-        out.push(format!("[정보] 삭제/변경 항목 {}개 더 있음", removed.len() - 20));
-    }
+    for line in added.iter().take(30) { out.push(format!("[추가] {}", line)); }
+    if added.len() > 30 { out.push(format!("[정보] 추가 항목 {}개 더 있음", added.len() - 30)); }
+    for line in removed.iter().take(20) { out.push(format!("[삭제/변경] {}", line)); }
+    if removed.len() > 20 { out.push(format!("[정보] 삭제/변경 항목 {}개 더 있음", removed.len() - 20)); }
     out
 }
 
@@ -80,9 +64,7 @@ pub fn recent_events(max_lines: usize) -> Vec<String> {
     let start = lines.len().saturating_sub(max_lines);
     let mut out = Vec::with_capacity(lines.len().saturating_sub(start) + 1);
     out.push(format!("최근 실시간 감시 로그 (최대 {}줄)", max_lines));
-    for line in &lines[start..] {
-        out.push((*line).to_string());
-    }
+    for line in &lines[start..] { out.push((*line).to_string()); }
     out
 }
 
@@ -94,27 +76,21 @@ fn collect_scan_lines() -> Vec<String> {
     all.extend(crate::scanner_extra3::run_extra_scan3());
     all.extend(crate::scanner_extra4::run_extra_scan4());
     all.extend(crate::scanner_extra5::run_extra_scan5());
+    all.extend(crate::scanner_extra6::run_extra_scan6());
     all
 }
 
 fn normalize(lines: &[String]) -> BTreeSet<String> {
-    lines.iter()
-        .map(|s| s.trim())
-        .filter(|s| !s.is_empty())
+    lines.iter().map(|s| s.trim()).filter(|s| !s.is_empty())
         .filter(|s| !s.starts_with("QuietGuard 0."))
         .filter(|s| !s.starts_with("점검 완료"))
         .filter(|s| !s.starts_with("---"))
-        .map(ToOwned::to_owned)
-        .collect()
+        .map(ToOwned::to_owned).collect()
 }
 
 fn data_dir() -> PathBuf {
-    if let Ok(local) = env::var("LOCALAPPDATA") {
-        return PathBuf::from(local).join("QuietGuard");
-    }
+    if let Ok(local) = env::var("LOCALAPPDATA") { return PathBuf::from(local).join("QuietGuard"); }
     PathBuf::from("QuietGuardData")
 }
 
-fn baseline_path() -> PathBuf {
-    data_dir().join("baseline.txt")
-}
+fn baseline_path() -> PathBuf { data_dir().join("baseline.txt") }
