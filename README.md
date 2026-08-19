@@ -9,19 +9,27 @@ QuietGuard is a low-memory Windows companion to Microsoft Defender focused on PU
 - Read-only detection first. No automatic deletion until restore/quarantine and false-positive handling are mature
 - Clean-room implementation: Malware Zero is used only as a reference for categories of Windows state worth inspecting; its code and databases are not copied
 
-## Current 0.4 checks
+## Current 0.5 checks
 
-QuietGuard now inspects Hosts, proxy, explicit DNS configuration, Run/RunOnce and other registry persistence locations, Startup folders, service ImagePath and ServiceDll values, scheduled tasks, IFEO Debugger entries, BITS jobs, Winsock catalog output, WMI permanent event consumers, Chrome/Edge/Firefox extension inventory, browser force-install extension policies, browser home/search/startup policy overrides, environment/logon-script persistence, file/URL shell-open associations, uninstall commands, browser shortcut arguments and IE ElevationPolicy entries.
+QuietGuard inspects Hosts, proxy, explicit DNS configuration, Run/RunOnce and other registry persistence locations, Startup folders, service ImagePath and ServiceDll values, scheduled tasks, IFEO Debugger entries, BITS jobs, Winsock catalog output, WMI permanent event consumers, Chrome/Edge/Firefox extension inventory, browser force-install extension policies, browser home/search/startup policy overrides, environment/logon-script persistence, file/URL shell-open associations, uninstall commands, browser shortcut arguments and IE ElevationPolicy entries.
 
-See `docs/COVERAGE.md` for the detailed roadmap.
+See `docs/COVERAGE.md` for the detailed coverage list.
 
-## Rules
+## Rule database updates
 
-`rules/heuristics.conf` contains simple extendable heuristics. The executable has safe built-in defaults, so it still runs if the external file is absent.
+`rules/heuristics.conf` contains lightweight extendable heuristics. Version 0.5 adds a **Rule Update** button to the native GUI.
+
+- The update manifest and rule file are downloaded from this GitHub repository over HTTPS.
+- The downloaded rule file is accepted only when its SHA-256 matches `rules/version.json`.
+- Updated rules are stored under `%LOCALAPPDATA%\QuietGuard\rules`, so administrator rights are not required.
+- The per-user updated rules take priority over the portable/bundled rules next to the executable.
+- If no external rule file exists, QuietGuard keeps safe built-in defaults.
+
+The current channel provides integrity checking, not a separate cryptographic publisher signature. A signed update channel remains a later hardening target.
 
 ## Memory strategy
 
-The project avoids heavy GUI/runtime frameworks. Some deep manual checks may briefly launch Windows built-in utilities such as `reg`, `schtasks`, `netsh`, `bitsadmin`, or PowerShell, but these are transient scan-time processes rather than always-on dependencies. The future real-time monitor is intended to use native Windows notifications/APIs and stay small in memory.
+The project avoids heavy GUI/runtime frameworks. Deep manual checks may briefly launch Windows built-in utilities such as `reg`, `schtasks`, `netsh`, `bitsadmin`, `curl`, `certutil`, or PowerShell, but these are transient scan/update-time processes rather than always-on dependencies. The future real-time monitor is intended to use native Windows notifications/APIs and stay small in memory.
 
 ## Build
 
@@ -29,7 +37,7 @@ The project avoids heavy GUI/runtime frameworks. Some deep manual checks may bri
 cargo build --release
 ```
 
-GitHub Actions also builds the Windows executable on every push to `main`.
+GitHub Actions builds a portable Windows package on every push to `main`. The artifact contains `QuietGuard.exe` plus the starter `rules` directory.
 
 ## Status
 
