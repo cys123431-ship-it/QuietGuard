@@ -49,17 +49,20 @@ pub fn update_all(force_public_intel: bool) -> Vec<String> {
     out.push(String::new());
 
     let mut keyed = crate::keyed_intel::update_keyed_feeds(force_public_intel);
-    match update_threatfox_compat(force_public_intel) {
-        Ok(Some(count)) => {
-            keyed.retain(|line| !line.starts_with("[경고] ThreatFox 업데이트 실패:"));
-            keyed.push(format!("[완료] ThreatFox 최근 IOC 도메인 {}개", count));
-            keyed.retain(|line| !line.starts_with("[DB] ThreatFox:"));
-            keyed.push(format!("[DB] ThreatFox: {}개 / recent malware IOC / payload delivery / C2", count));
-        }
-        Ok(None) => {}
-        Err(e) => {
-            if !keyed.iter().any(|line| line.starts_with("[경고] ThreatFox 업데이트 실패:")) {
-                keyed.push(format!("[경고] ThreatFox 업데이트 실패: {} (기존 캐시 유지)", e));
+    let primary_threatfox_failed = keyed.iter().any(|line| line.starts_with("[경고] ThreatFox 업데이트 실패:"));
+    if primary_threatfox_failed {
+        match update_threatfox_compat(force_public_intel) {
+            Ok(Some(count)) => {
+                keyed.retain(|line| !line.starts_with("[경고] ThreatFox 업데이트 실패:"));
+                keyed.push(format!("[완료] ThreatFox 최근 IOC 도메인 {}개", count));
+                keyed.retain(|line| !line.starts_with("[DB] ThreatFox:"));
+                keyed.push(format!("[DB] ThreatFox: {}개 / recent malware IOC / payload delivery / C2", count));
+            }
+            Ok(None) => {}
+            Err(e) => {
+                if !keyed.iter().any(|line| line.starts_with("[경고] ThreatFox 업데이트 실패:")) {
+                    keyed.push(format!("[경고] ThreatFox 업데이트 실패: {} (기존 캐시 유지)", e));
+                }
             }
         }
     }
