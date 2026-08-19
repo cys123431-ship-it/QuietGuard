@@ -13,12 +13,15 @@
 9. v0.9 - fake-system-process, numeric System32 file, Group Policy Registry.pol and Chromium extension metadata checks
 10. v0.10 - service/driver combination analysis, Firefox metadata/policies and notification-origin details
 11. v0.11 - targeted machine CLSID/App Paths checks and Authenticode signer context for suspicious files
+12. v1.0 - network/policy inspection expansion, automatic rule checks, stronger rule integrity validation and wider low-memory change monitoring
 
-## Next
+## Post-1.0 hardening
 
-12. v0.12 - public/licensed threat-intelligence plumbing for PUP/hash/domain context, kept optional and cache-friendly
-13. v0.13 - safe quarantine/restore with explicit user approval and rollback metadata
-14. v0.14 - signed rule/update channel plus settings/log retention hardening
-15. v1.0 - stable release packaging, false-positive tuning and documented recovery paths
+- Optional public/licensed PUP/hash/domain reputation context with local caching
+- Winsock/LSP provider baseline and allowlisting
+- More precise service/driver reputation and signer scoring
+- Safe quarantine/restore only after rollback and false-positive handling are mature
+- Independent cryptographic publisher signing for rule/update metadata
+- Settings/log retention and installer/release packaging
 
-The project remains read-only until restore and false-positive handling are mature enough to make remediation safe.
+QuietGuard 1.0 intentionally remains read-only. It detects and records suspicious or unwanted system state without automatically removing or blocking entries.
