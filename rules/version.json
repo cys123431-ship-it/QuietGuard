@@ -1,8 +1,8 @@
 {
   "schema": 2,
-  "rules_version": "0.5.0",
+  "rules_version": "0.5.1",
   "updated": "2026-08-19",
-  "sha256": "8f90507c2e8fbfadb463b2427cdb1a718cf0a8c905aa54a9d587440f82bb1188",
+  "sha256": "94ec22e67b886b36e42a097407dbefa6d9a8fd9842996266aa099b3d425c6e9c",
   "min_app_version": "0.5.0",
   "source": "QuietGuard GitHub rule channel"
 }
