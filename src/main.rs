@@ -10,6 +10,8 @@ mod scanner_extra;
 mod scanner_extra2;
 #[cfg(target_os = "windows")]
 mod updater;
+#[cfg(target_os = "windows")]
+mod monitor;
 
 #[cfg(not(target_os = "windows"))]
 fn main() {
@@ -79,6 +81,8 @@ mod app {
     const IDC_ARROW: LPCWSTR = 32512usize as LPCWSTR;
     const ID_SCAN: usize = 1001;
     const ID_UPDATE: usize = 1002;
+    const ID_WATCH_START: usize = 1003;
+    const ID_WATCH_STOP: usize = 1004;
 
     static mut LISTBOX: HWND = null_mut();
 
@@ -139,6 +143,17 @@ mod app {
         }
     }
 
+    unsafe fn start_watch() {
+        clear_results();
+        add_line(&crate::monitor::start_background());
+        add_line("변경 이벤트는 %LOCALAPPDATA%\\QuietGuard\\events.log 에 기록됩니다.");
+    }
+
+    unsafe fn stop_watch() {
+        clear_results();
+        add_line(&crate::monitor::request_stop());
+    }
+
     unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         match msg {
             WM_COMMAND => {
@@ -149,6 +164,14 @@ mod app {
                     }
                     ID_UPDATE => {
                         run_rule_update();
+                        return 0;
+                    }
+                    ID_WATCH_START => {
+                        start_watch();
+                        return 0;
+                    }
+                    ID_WATCH_STOP => {
+                        stop_watch();
                         return 0;
                     }
                     _ => {}
@@ -181,10 +204,10 @@ mod app {
             };
             if RegisterClassW(&wc) == 0 { return; }
 
-            let title = wide("QuietGuard 0.5 - PUP / 시스템 변경 점검");
+            let title = wide("QuietGuard 0.6 - PUP / 시스템 변경 점검");
             let hwnd = CreateWindowExW(
                 0, class_name.as_ptr(), title.as_ptr(), WS_OVERLAPPEDWINDOW | WS_VISIBLE,
-                CW_USEDEFAULT, CW_USEDEFAULT, 900, 590,
+                CW_USEDEFAULT, CW_USEDEFAULT, 960, 610,
                 null_mut(), null_mut(), instance, null_mut()
             );
             if hwnd.is_null() { return; }
@@ -193,24 +216,41 @@ mod app {
             let scan_text = wide("시스템 점검");
             CreateWindowExW(
                 0, button.as_ptr(), scan_text.as_ptr(), WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                20, 20, 140, 36, hwnd, ID_SCAN as HMENU, instance, null_mut()
+                20, 20, 135, 36, hwnd, ID_SCAN as HMENU, instance, null_mut()
             );
 
             let update_text = wide("규칙 업데이트");
             CreateWindowExW(
                 0, button.as_ptr(), update_text.as_ptr(), WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                180, 20, 140, 36, hwnd, ID_UPDATE as HMENU, instance, null_mut()
+                170, 20, 135, 36, hwnd, ID_UPDATE as HMENU, instance, null_mut()
+            );
+
+            let watch_start_text = wide("실시간 감시 시작");
+            CreateWindowExW(
+                0, button.as_ptr(), watch_start_text.as_ptr(), WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+                320, 20, 145, 36, hwnd, ID_WATCH_START as HMENU, instance, null_mut()
+            );
+
+            let watch_stop_text = wide("실시간 감시 중지");
+            CreateWindowExW(
+                0, button.as_ptr(), watch_stop_text.as_ptr(), WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+                480, 20, 145, 36, hwnd, ID_WATCH_STOP as HMENU, instance, null_mut()
             );
 
             let listbox = wide("LISTBOX");
             LISTBOX = CreateWindowExW(
                 0, listbox.as_ptr(), null(),
                 WS_CHILD | WS_VISIBLE | WS_BORDER | WS_VSCROLL | LBS_NOINTEGRALHEIGHT,
-                20, 72, 840, 455, hwnd, null_mut(), instance, null_mut()
+                20, 72, 900, 475, hwnd, null_mut(), instance, null_mut()
             );
 
-            add_line("QuietGuard 준비됨 - 시스템 점검 또는 규칙 업데이트를 선택하세요.");
+            add_line("QuietGuard 준비됨 - 시스템 점검 / 규칙 업데이트 / 실시간 감시를 사용할 수 있습니다.");
             add_line("Defender를 대체하지 않으며 PUP/시스템 변조 흔적을 보조 점검합니다.");
+            add_line(if crate::monitor::is_running() {
+                "실시간 감시 상태: 실행 중"
+            } else {
+                "실시간 감시 상태: 중지됨"
+            });
             ShowWindow(hwnd, SW_SHOW);
             UpdateWindow(hwnd);
 
@@ -225,5 +265,9 @@ mod app {
 
 #[cfg(target_os = "windows")]
 fn main() {
-    app::run();
+    if std::env::args().any(|arg| arg == "--watch") {
+        monitor::run_watcher();
+    } else {
+        app::run();
+    }
 }
