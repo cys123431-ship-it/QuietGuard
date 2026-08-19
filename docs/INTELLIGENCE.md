@@ -1,48 +1,46 @@
 # Intelligence sources
 
-QuietGuard keeps external intelligence separate from its MIT-licensed source code. External lists are downloaded by the user's machine from their original upstream locations and converted into local lookup indexes. The upstream data is not committed into this repository.
+QuietGuard keeps external intelligence separate from its MIT-licensed source code. External lists are downloaded by the user's machine from original upstream locations and converted into local lookup indexes; upstream databases are not committed into this repository.
 
-## Enabled automatically with no account or API key
+## Automatic no-key sources
 
-| Source | QuietGuard use | Upstream license/status |
+| Source | QuietGuard use | License/status |
 | --- | --- | --- |
-| UncheckyAds (FadeMind/hosts.extras) | Windows installer advertising/PUP network indicators | MIT repository |
-| FadeMind add.Risk | Risk-domain indicators | MIT repository |
-| KADhosts | Fraud/adware/scam indicators | CC BY-SA 4.0 |
-| StevenBlack Unified Hosts | Broad adware/malware domain context | Aggregates multiple upstream lists with differing licenses; local runtime cache only |
+| UncheckyAds | Windows installer advertising/PUP context | MIT |
+| FadeMind add.Risk | Risk-domain context | MIT |
+| KADhosts | Fraud/adware/scam context | CC BY-SA 4.0 |
+| StevenBlack Unified Hosts | Broad adware/malware aggregate | Mixed upstream licenses; runtime cache only |
+| YousList | Korean-site advertising context, low-confidence only | CC BY 4.0 |
 
-Public intelligence refreshes at most every 24 hours unless **DB 업데이트** is pressed. Raw list files are removed after indexing, and failed sources retain their prior local index.
+The first four sources use `%LOCALAPPDATA%\QuietGuard\intel`; YousList uses the `regional` subdirectory. They refresh at most every 24 hours unless **DB 업데이트** is pressed. YousList matches are labelled as advertising references, not malware verdicts.
 
-## Low-memory index format
+## Low-memory format
 
-Normalized domains are hashed with FNV-1a 64-bit, sorted and stored as fixed-width 17-byte records. QuietGuard uses binary search directly on disk instead of loading the full database into resident memory. FNV is only a compact lookup key, not an authenticity mechanism.
+Normalized domains are hashed with FNV-1a 64-bit, sorted and stored as fixed-width 17-byte records. Lookups binary-search the files directly instead of loading the full databases into resident RAM. FNV is a compact local lookup key, not an authenticity mechanism.
 
-## Optional abuse.ch integration (implemented in 1.2)
+## Optional abuse.ch integration
 
-One abuse.ch Auth-Key can enable both adapters. QuietGuard first checks the `QUIETGUARD_ABUSECH_AUTH_KEY` environment variable, then `%LOCALAPPDATA%\QuietGuard\secrets.conf` for `abusech_auth_key=...`. No secret is stored in the repository or placed literally in the PowerShell command line.
+One abuse.ch Auth-Key enables both ThreatFox and URLhaus adapters. QuietGuard checks `QUIETGUARD_ABUSECH_AUTH_KEY`, then `%LOCALAPPDATA%\QuietGuard\secrets.conf` for `abusech_auth_key=...`. Without a key, both adapters are skipped. With a key, recent data is cached into low-memory disk indexes and normally refreshed at most every six hours.
 
-If no key exists, these adapters are skipped without affecting normal operation.
+## Optional Google Safe Browsing v5 (implemented, disabled by default)
 
-### ThreatFox
+Google Safe Browsing URL search is privacy-sensitive because the checked raw URLs are sent to Google. QuietGuard therefore never enables it automatically.
 
-QuietGuard requests the recent 7-day IOC set, extracts domain-like IOCs and stores them in `%LOCALAPPDATA%\QuietGuard\intel\keyed\threatfox.f64`. The cache is refreshed at most every six hours unless a forced DB update is requested.
+To opt in, `%LOCALAPPDATA%\QuietGuard\secrets.conf` must contain both:
 
-### URLhaus
+```text
+google_safe_browsing_enabled=true
+google_safe_browsing_key=YOUR_KEY
+```
 
-QuietGuard downloads the authenticated recent CSV dataset, extracts URL hostnames and stores them in `%LOCALAPPDATA%\QuietGuard\intel\keyed\urlhaus.f64`. The same six-hour cache interval applies.
+or equivalent `QUIETGUARD_GSB_ENABLED` / `QUIETGUARD_GSB_KEY` environment variables. QuietGuard sends at most 50 candidate URLs per manual scan and reports `UNWANTED_SOFTWARE` separately from other threat types. The temporary local request/response files are deleted after the query.
 
-Both caches keep their last known-good index when an API request or parse fails. Scanner results identify ThreatFox/URLhaus matches separately from the broader PUP/adware lists.
+Safe Browsing is intended for non-commercial use; QuietGuard leaves the feature off unless the user explicitly configures it.
 
-A template is provided at `config/secrets.conf.example`; the user only needs to copy/fill it if they later want these optional services.
+## Optional ClamAV bridge
 
-## Google Safe Browsing v5 (future opt-in)
-
-Google Safe Browsing includes an `UNWANTED_SOFTWARE` threat type and is relevant to targeted PUP/PUA URL reputation checks. It requires Google API access and is intended for non-commercial use, so QuietGuard will keep it disabled unless explicitly configured.
-
-## ClamAV (future optional bridge)
-
-ClamAV supports PUA detection and distributes signed signature databases updated by FreshClam. QuietGuard can invoke it on-demand when present without making it another always-on engine; this preserves QuietGuard's low-memory Defender-companion design.
+If `clamscan.exe` is already present, QuietGuard can run a bounded on-demand PUA scan of selected autorun/service/startup candidates using `--detect-pua`. If `freshclam.exe` is also present, DB update can check official ClamAV signatures. QuietGuard never launches ClamAV as an always-on daemon.
 
 ## Privacy
 
-The default no-key feeds are bulk downloads and do not receive local filenames, scan results or user documents. ThreatFox/URLhaus bulk/cache refresh also avoids per-file lookups. Future query-style services such as Google Safe Browsing should remain opt-in because URL queries reveal information about what is being checked.
+Default no-key sources are bulk downloads and do not receive local filenames, browser history, scan results or documents. ThreatFox/URLhaus are bulk/cache refreshes rather than per-file queries. Google Safe Browsing is the exception: it sends selected URLs and is therefore opt-in only.
