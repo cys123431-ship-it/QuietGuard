@@ -4,7 +4,7 @@ use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -31,19 +31,13 @@ pub struct KeyedIntelHit {
 }
 
 pub fn update_keyed_feeds(force: bool) -> Vec<String> {
-    let mut out = Vec::with_capacity(14);
+    let mut out = Vec::with_capacity(16);
     out.push("QuietGuard 선택형 abuse.ch DB 업데이트".into());
 
     let Some(key) = abusech_key() else {
         out.push("[정보] abuse.ch Auth-Key가 없어 ThreatFox/URLhaus는 건너뜁니다. 기본 공개 DB는 계속 정상 사용됩니다.".into());
         return out;
     };
-
-    if !force && keyed_ready() && !update_due() {
-        out.push("[최신] ThreatFox/URLhaus 로컬 캐시는 6시간 이내에 갱신되었습니다.".into());
-        out.extend(status_lines());
-        return out;
-    }
 
     let dir = keyed_dir();
     let raw = dir.join("raw");
@@ -53,18 +47,34 @@ pub fn update_keyed_feeds(force: bool) -> Vec<String> {
     }
 
     let mut any_success = false;
-    match update_threatfox(&key, &raw) {
-        Ok(count) => { any_success = true; out.push(format!("[완료] ThreatFox 최근 IOC 도메인 {}개", count)); }
-        Err(e) => out.push(format!("[경고] ThreatFox 업데이트 실패: {} (기존 캐시 유지)", e)),
-    }
-    match update_urlhaus(&key, &raw) {
-        Ok(count) => { any_success = true; out.push(format!("[완료] URLhaus 최근 URL 도메인 {}개", count)); }
-        Err(e) => out.push(format!("[경고] URLhaus 업데이트 실패: {} (기존 캐시 유지)", e)),
+
+    if force || !dir.join("threatfox.f64").is_file() || source_due("threatfox") {
+        match update_threatfox(&key, &raw) {
+            Ok(count) => {
+                any_success = true;
+                let _ = mark_source_updated("threatfox");
+                out.push(format!("[완료] ThreatFox 최근 IOC 도메인 {}개", count));
+            }
+            Err(e) => out.push(format!("[경고] ThreatFox 업데이트 실패: {} (기존 캐시 유지)", e)),
+        }
+    } else {
+        out.push("[최신] ThreatFox 로컬 캐시는 6시간 이내에 갱신되었습니다.".into());
     }
 
-    if any_success {
-        let _ = fs::write(dir.join("last-update.txt"), format!("{}\n", unix_now()));
+    if force || !dir.join("urlhaus.f64").is_file() || source_due("urlhaus") {
+        match update_urlhaus(&key, &raw) {
+            Ok(count) => {
+                any_success = true;
+                let _ = mark_source_updated("urlhaus");
+                out.push(format!("[완료] URLhaus 최근 URL 도메인 {}개", count));
+            }
+            Err(e) => out.push(format!("[경고] URLhaus 업데이트 실패: {} (기존 캐시 유지)", e)),
+        }
+    } else {
+        out.push("[최신] URLhaus 로컬 캐시는 6시간 이내에 갱신되었습니다.".into());
     }
+
+    if any_success { let _ = fs::write(dir.join("last-update.txt"), format!("{}\n", unix_now())); }
     let _ = fs::remove_dir_all(raw);
     out.extend(status_lines());
     out
@@ -84,7 +94,8 @@ pub fn status_lines() -> Vec<String> {
     for source in SOURCES {
         let path = dir.join(format!("{}.f64", source.id));
         if let Ok(meta) = fs::metadata(path) {
-            out.push(format!("[DB] {}: {}개 / {}", source.label, meta.len() / RECORD_LEN, source.category));
+            let age = source_age_secs(source.id).map(|s| format!(" / 약 {}시간 전 갱신", s / 3600)).unwrap_or_default();
+            out.push(format!("[DB] {}: {}개 / {}{}", source.label, meta.len() / RECORD_LEN, source.category, age));
         }
     }
     out
@@ -113,18 +124,15 @@ pub fn lookup_domain(input: &str) -> Vec<KeyedIntelHit> {
 }
 
 pub fn abusech_config_status() -> String {
-    if abusech_key().is_some() {
-        "abuse.ch Auth-Key: 설정됨 (ThreatFox/URLhaus 활성)".into()
-    } else {
-        "abuse.ch Auth-Key: 없음 (선택형 ThreatFox/URLhaus 비활성)".into()
-    }
+    if abusech_key().is_some() { "abuse.ch Auth-Key: 설정됨 (ThreatFox/URLhaus 활성)".into() }
+    else { "abuse.ch Auth-Key: 없음 (선택형 ThreatFox/URLhaus 비활성)".into() }
 }
 
 fn update_threatfox(key: &str, raw_dir: &Path) -> Result<usize, String> {
     let destination = raw_dir.join("threatfox.json");
     let dest = ps_quote(&destination.to_string_lossy());
     let script = format!(
-        "$ErrorActionPreference='Stop';$h=@{{'Auth-Key'=$env:QUIETGUARD_ABUSECH_AUTH_KEY}};$b='{{\"query\":\"get_iocs\",\"days\":7}}';Invoke-WebRequest -UseBasicParsing -Method POST -ContentType 'application/json' -Headers $h -Body $b -Uri 'https://threatfox-api.abuse.ch/api/v1/' -OutFile '{}';",
+        "$ErrorActionPreference='Stop';$h=@{{'Auth-Key'=$env:QUIETGUARD_ABUSECH_AUTH_KEY}};$b='{{\"query\":\"get_iocs\",\"days\":7}}';Invoke-WebRequest -UseBasicParsing -TimeoutSec 45 -Method POST -ContentType 'application/json' -Headers $h -Body $b -Uri 'https://threatfox-api.abuse.ch/api/v1/' -OutFile '{}';",
         dest
     );
     run_powershell_with_key(&script, key)?;
@@ -154,7 +162,7 @@ fn update_urlhaus(key: &str, raw_dir: &Path) -> Result<usize, String> {
     let destination = raw_dir.join("urlhaus.csv");
     let dest = ps_quote(&destination.to_string_lossy());
     let script = format!(
-        "$ErrorActionPreference='Stop';$u='https://urlhaus-api.abuse.ch/v2/files/exports/'+$env:QUIETGUARD_ABUSECH_AUTH_KEY+'/recent.csv';Invoke-WebRequest -UseBasicParsing -Uri $u -OutFile '{}';",
+        "$ErrorActionPreference='Stop';$u='https://urlhaus-api.abuse.ch/v2/files/exports/'+$env:QUIETGUARD_ABUSECH_AUTH_KEY+'/recent.csv';Invoke-WebRequest -UseBasicParsing -TimeoutSec 45 -Uri $u -OutFile '{}';",
         dest
     );
     run_powershell_with_key(&script, key)?;
@@ -222,10 +230,19 @@ fn valid_key(value: &str) -> bool {
     value.len() >= 16 && value.len() <= 256 && value.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
 }
 
-fn update_due() -> bool {
-    let path = keyed_dir().join("last-update.txt");
-    let Some(ts) = fs::read_to_string(path).ok().and_then(|s| s.trim().parse::<u64>().ok()) else { return true; };
-    unix_now().saturating_sub(ts) >= UPDATE_INTERVAL_SECS
+fn source_due(id: &str) -> bool {
+    source_age_secs(id).map(|age| age >= UPDATE_INTERVAL_SECS).unwrap_or(true)
+}
+
+fn source_age_secs(id: &str) -> Option<u64> {
+    let dir = keyed_dir();
+    let ts = fs::read_to_string(dir.join(format!("{}-last-update.txt", id))).ok().and_then(|s| s.trim().parse::<u64>().ok())
+        .or_else(|| fs::read_to_string(dir.join("last-update.txt")).ok().and_then(|s| s.trim().parse::<u64>().ok()))?;
+    Some(unix_now().saturating_sub(ts))
+}
+
+fn mark_source_updated(id: &str) -> std::io::Result<()> {
+    fs::write(keyed_dir().join(format!("{}-last-update.txt", id)), format!("{}\n", unix_now()))
 }
 
 fn urls_in_text(text: &str) -> Vec<String> {
@@ -283,7 +300,19 @@ fn binary_search_hash(path: &Path, target: u64) -> std::io::Result<bool> {
 
 fn replace_file(source: &Path, destination: &Path) -> std::io::Result<()> {
     let backup = destination.with_extension("f64.bak");
-    if destination.exists() { let _ = fs::copy(destination, &backup); fs::remove_file(destination)?; }
+    if backup.exists() { let _ = fs::remove_file(&backup); }
+    let had_destination = destination.exists();
+    if had_destination { move_file(destination, &backup)?; }
+    match move_file(source, destination) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            if had_destination && backup.exists() && !destination.exists() { let _ = move_file(&backup, destination); }
+            Err(error)
+        }
+    }
+}
+
+fn move_file(source: &Path, destination: &Path) -> std::io::Result<()> {
     match fs::rename(source, destination) {
         Ok(()) => Ok(()),
         Err(_) => { fs::copy(source, destination)?; fs::remove_file(source)?; Ok(()) }
@@ -317,12 +346,4 @@ fn unescape_json_basic(text: &str) -> String {
 fn compact(text: &str, max: usize) -> String {
     let flat = text.replace(['\r', '\n'], " ");
     if flat.chars().count() <= max { flat } else { flat.chars().take(max).collect::<String>() + "..." }
-}
-
-#[allow(dead_code)]
-fn hidden_output(program: &str, args: &[&str]) -> std::io::Result<Output> {
-    let mut cmd = Command::new(program);
-    cmd.args(args);
-    cmd.creation_flags(CREATE_NO_WINDOW);
-    cmd.output()
 }
