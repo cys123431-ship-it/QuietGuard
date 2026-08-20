@@ -98,6 +98,7 @@ mod app {
     const WM_DESTROY: UINT = 0x0002;
     const WM_COMMAND: UINT = 0x0111;
     const WM_APP_UPDATE_DONE: UINT = 0x8001;
+    const WM_APP_WORK_DONE: UINT = 0x8002;
     const LB_ADDSTRING: UINT = 0x0180;
     const LB_RESETCONTENT: UINT = 0x0184;
     const COLOR_WINDOW: isize = 5;
@@ -116,6 +117,8 @@ mod app {
     static mut LISTBOX: HWND = null_mut();
     static UPDATE_RUNNING: AtomicBool = AtomicBool::new(false);
     static UPDATE_RESULT: Mutex<Option<Vec<String>>> = Mutex::new(None);
+    static WORK_RUNNING: AtomicBool = AtomicBool::new(false);
+    static WORK_RESULT: Mutex<Option<Vec<String>>> = Mutex::new(None);
 
     #[link(name = "user32")]
     extern "system" {
@@ -138,15 +141,18 @@ mod app {
     extern "system" { fn GetModuleHandleW(lpModuleName: LPCWSTR) -> HINSTANCE; }
 
     fn wide(s: &str) -> Vec<u16> { s.encode_utf16().chain(std::iter::once(0)).collect() }
+
     unsafe fn add_line(text: &str) {
         let w = wide(text);
         SendMessageW(LISTBOX, LB_ADDSTRING, 0, w.as_ptr() as LPARAM);
     }
+
     unsafe fn show_lines(lines: Vec<String>) {
         SendMessageW(LISTBOX, LB_RESETCONTENT, 0, 0);
         for line in lines { add_line(&line); }
     }
-    unsafe fn run_scan() {
+
+    fn collect_scan_lines() -> Vec<String> {
         let mut lines = crate::scanner::run_quick_scan();
         lines.extend(crate::scanner_extra::run_extra_scan());
         lines.extend(crate::scanner_extra2::run_extra_scan2());
@@ -158,9 +164,14 @@ mod app {
         lines.extend(crate::scanner_extra8::run_extra_scan8());
         lines.extend(crate::clam_bridge::scan_candidates());
         lines.extend(crate::safe_browsing::scan_opt_in());
-        show_lines(lines);
+        lines
     }
+
     unsafe fn start_update_async(hwnd: HWND) {
+        if WORK_RUNNING.load(Ordering::Acquire) {
+            show_lines(vec!["[정보] 시스템 점검/기준 작업이 진행 중입니다. 완료 후 DB 업데이트를 실행하세요.".into()]);
+            return;
+        }
         if UPDATE_RUNNING.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire).is_err() {
             show_lines(vec!["[정보] DB 업데이트가 이미 진행 중입니다. 중복 실행하지 않습니다.".into()]);
             return;
@@ -177,26 +188,51 @@ mod app {
             unsafe { PostMessageW(target as HWND, WM_APP_UPDATE_DONE, 0, 0); }
         });
     }
+
+    unsafe fn start_work_async(hwnd: HWND, label: &str, work: fn() -> Vec<String>) {
+        if UPDATE_RUNNING.load(Ordering::Acquire) {
+            show_lines(vec!["[정보] DB 업데이트가 진행 중입니다. 완료 후 다시 실행하세요.".into()]);
+            return;
+        }
+        if WORK_RUNNING.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire).is_err() {
+            show_lines(vec!["[정보] 다른 시스템 점검/기준 작업이 이미 진행 중입니다.".into()]);
+            return;
+        }
+        show_lines(vec![
+            format!("[정보] {} 작업을 백그라운드에서 시작했습니다.", label),
+            "창은 계속 사용할 수 있으며 완료되면 결과가 자동 표시됩니다.".into(),
+        ]);
+        let target = hwnd as usize;
+        std::thread::spawn(move || {
+            let lines = work();
+            if let Ok(mut slot) = WORK_RESULT.lock() { *slot = Some(lines); }
+            WORK_RUNNING.store(false, Ordering::Release);
+            unsafe { PostMessageW(target as HWND, WM_APP_WORK_DONE, 0, 0); }
+        });
+    }
+
     unsafe fn show_automation_result(mut lines: Vec<String>) {
         lines.push(String::new());
         lines.extend(crate::automation::status_lines());
         show_lines(lines);
     }
+
     unsafe fn wnd_action(hwnd: HWND, id: usize) {
         match id {
-            ID_SCAN => run_scan(),
+            ID_SCAN => start_work_async(hwnd, "시스템 점검", collect_scan_lines),
             ID_UPDATE => start_update_async(hwnd),
             ID_WATCH_START => show_lines(vec![crate::monitor::start_background(), "변경 이벤트는 %LOCALAPPDATA%\\QuietGuard\\events.log 에 기록됩니다.".into()]),
             ID_WATCH_STOP => show_lines(vec![crate::monitor::request_stop()]),
             ID_LOG => show_lines(crate::baseline::recent_events(120)),
-            ID_BASELINE_SAVE => show_lines(crate::baseline::save_baseline()),
-            ID_BASELINE_COMPARE => show_lines(crate::baseline::compare_baseline()),
+            ID_BASELINE_SAVE => start_work_async(hwnd, "기준 저장", crate::baseline::save_baseline),
+            ID_BASELINE_COMPARE => start_work_async(hwnd, "기준 비교", crate::baseline::compare_baseline),
             ID_STARTUP_TOGGLE => show_automation_result(crate::automation::toggle_windows_startup()),
             ID_MONITOR_AUTO_TOGGLE => show_automation_result(crate::automation::toggle_monitor_autostart()),
             ID_DB_AUTO_TOGGLE => show_automation_result(crate::automation::toggle_db_autoupdate()),
             _ => {}
         }
     }
+
     unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         match msg {
             WM_COMMAND => { wnd_action(hwnd, wparam & 0xFFFF); return 0; }
@@ -206,13 +242,21 @@ mod app {
                 }
                 return 0;
             }
+            WM_APP_WORK_DONE => {
+                if let Ok(mut slot) = WORK_RESULT.lock() {
+                    if let Some(lines) = slot.take() { show_lines(lines); }
+                }
+                return 0;
+            }
             WM_DESTROY => { PostQuitMessage(0); return 0; }
             _ => {}
         }
         DefWindowProcW(hwnd, msg, wparam, lparam)
     }
+
     unsafe fn make_button(hwnd: HWND, instance: HINSTANCE, x: i32, y: i32, width: i32, id: usize, text: &str) {
-        let class = wide("BUTTON"); let caption = wide(text);
+        let class = wide("BUTTON");
+        let caption = wide(text);
         CreateWindowExW(0, class.as_ptr(), caption.as_ptr(), WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
             x, y, width, 34, hwnd, id as HMENU, instance, null_mut());
     }
@@ -242,16 +286,20 @@ mod app {
             let listbox = wide("LISTBOX");
             LISTBOX = CreateWindowExW(0, listbox.as_ptr(), null(), WS_CHILD | WS_VISIBLE | WS_BORDER | WS_VSCROLL | LBS_NOINTEGRALHEIGHT,
                 20, 112, 980, 490, hwnd, null_mut(), instance, null_mut());
-            add_line("QuietGuard 준비됨 - 자동 실행/자동 감시/자동 DB 업데이트는 기본적으로 꺼져 있으며 각 설정 버튼으로 켤 수 있습니다.");
+            add_line(&format!("QuietGuard {} 준비됨 - 자동 실행/자동 감시/자동 DB 업데이트는 각 설정 버튼으로 제어합니다.", env!("CARGO_PKG_VERSION")));
             add_line("Defender를 대체하지 않으며 PUP/광고프로그램/하이재킹 및 시스템 변조 흔적에 집중합니다.");
             add_line(&crate::keyed_intel::abusech_config_status());
             add_line(&crate::safe_browsing::status_line());
             add_line(&crate::clam_bridge::status_line());
             add_line(if crate::monitor::is_running() { "실시간 감시 상태: 실행 중" } else { "실시간 감시 상태: 중지됨" });
             for line in crate::automation::status_lines() { add_line(&line); }
-            ShowWindow(hwnd, SW_SHOW); UpdateWindow(hwnd);
+            ShowWindow(hwnd, SW_SHOW);
+            UpdateWindow(hwnd);
             let mut msg: MSG = zeroed();
-            while GetMessageW(&mut msg, null_mut(), 0, 0) > 0 { TranslateMessage(&msg); DispatchMessageW(&msg); }
+            while GetMessageW(&mut msg, null_mut(), 0, 0) > 0 {
+                TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
         }
     }
 }
