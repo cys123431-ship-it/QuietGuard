@@ -2,7 +2,7 @@
 
 QuietGuard is a low-memory Windows companion to Microsoft Defender focused on PUP/PUA, unwanted persistence, adware/browser hijacking and suspicious system configuration changes rather than traditional antivirus replacement.
 
-## QuietGuard 1.5.1
+## QuietGuard 1.6.0
 
 ### Read-only safety model
 
@@ -15,8 +15,27 @@ Automatic behavior remains off until the user enables each setting from the GUI.
 - **윈도우 자동실행 설정**: current-user Windows login startup registration.
 - **감시 자동시작 설정**: current-user login registration for the low-memory `--watch` process.
 - **DB 자동업데이트 설정**: Task Scheduler job invoking `--update-data-silent` every 6 hours.
+- **앱 자동업데이트 설정**: Task Scheduler job invoking `--self-update-silent` every 6 hours.
 
-QuietGuard 1.5.1 validates that startup registrations and the scheduled task still point at the current executable. If the portable folder is moved, the GUI reports a path mismatch and pressing the corresponding settings button repairs the registration.
+QuietGuard validates that startup registrations and scheduled tasks still point at the current executable. If the portable folder is moved, the GUI reports a path mismatch and pressing the corresponding settings button repairs the registration.
+
+### Program self-update
+
+When **앱 자동업데이트 설정** is enabled, QuietGuard checks the repository's latest official GitHub Release every six hours. Development commits on `main`, draft releases and prereleases are not installed through this channel.
+
+For a newer release QuietGuard:
+
+1. downloads the versioned Windows x64 release ZIP and its `.sha256` companion over HTTPS,
+2. verifies the ZIP SHA-256 before extracting anything,
+3. checks that the staged package contains `QuietGuard.exe` and the bundled starter rule files,
+4. stops the low-memory watcher only when an actual program update is ready,
+5. launches the newly downloaded QuietGuard executable from the staging directory as a replacement helper,
+6. replaces the installed executable only after the updater process exits, while retaining `QuietGuard.exe.previous`,
+7. restores/restarts the watcher after the replacement attempt.
+
+If another QuietGuard GUI process keeps the executable locked, the helper leaves the installed version intact and the next scheduled update run retries. Update results are written to `%LOCALAPPDATA%\QuietGuard\app-update.log`.
+
+The SHA-256 companion protects against corruption and mismatched release assets. It is not an independent publisher signature: compromise of the GitHub repository/release account could affect both the package and its hash. Independent signed update metadata remains a future hardening target.
 
 ### Low-memory real-time monitoring
 
@@ -62,7 +81,7 @@ Database and rule replacement keeps a backup and attempts automatic rollback if 
 
 QuietGuard inspects Hosts, DNS/proxy/PAC, Run/RunOnce/Startup, Winlogon, AppInit/AppCert DLLs, Active Setup, services/drivers, scheduled tasks, IFEO, BITS, Winsock, WMI event consumers, shell associations, App Paths, browser shortcuts, Chrome/Edge/Firefox extensions/policies/notifications, COM registrations, selected hidden executables, suspicious Windows-process-name locations, Group Policy strings, firewall rules, execution restrictions, Software Restriction Policy, SafeBoot, MozillaPlugins, IE SearchScopes/DOMStorage and local IPsec policy.
 
-Chromium extension `update_url` checks now validate exact HTTPS hosts rather than substring matches, and extension version folders are compared numerically.
+Chromium extension `update_url` checks validate exact HTTPS hosts rather than substring matches, and extension version folders are compared numerically.
 
 ## Low-memory intelligence format
 
@@ -88,4 +107,4 @@ GitHub Actions performs these checks on Windows and packages the native x64 exec
 
 ## Status
 
-QuietGuard 1.5.1 remains a defensive, read-only prototype. It complements Microsoft Defender and does not replace antivirus protection.
+QuietGuard 1.6.0 remains a defensive, read-only prototype. It complements Microsoft Defender and does not replace antivirus protection.

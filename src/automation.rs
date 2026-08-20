@@ -7,7 +7,9 @@ const RUN_KEY: &str = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 const STARTUP_VALUE: &str = "QuietGuard";
 const MONITOR_VALUE: &str = "QuietGuardMonitor";
 const DB_TASK: &str = "QuietGuard DB Update";
+const APP_TASK: &str = "QuietGuard App Update";
 const DB_TASK_HOURS: &str = "6";
+const APP_TASK_HOURS: &str = "6";
 
 pub fn toggle_windows_startup() -> Vec<String> {
     if windows_startup_enabled() {
@@ -54,11 +56,33 @@ pub fn toggle_db_autoupdate() -> Vec<String> {
     }
 }
 
+pub fn toggle_app_autoupdate() -> Vec<String> {
+    if app_autoupdate_enabled() {
+        let result = hidden_status("schtasks.exe", &["/Delete", "/F", "/TN", APP_TASK]);
+        if result { vec!["[완료] QuietGuard 프로그램 자동 업데이트를 껐습니다.".into()] }
+        else { vec!["[오류] 프로그램 자동 업데이트 작업을 제거하지 못했습니다.".into()] }
+    } else {
+        let Some(command) = exe_command("--self-update-silent") else { return vec!["[오류] QuietGuard 실행 파일 경로를 확인하지 못했습니다.".into()]; };
+        let result = hidden_status("schtasks.exe", &["/Create", "/F", "/SC", "HOURLY", "/MO", APP_TASK_HOURS, "/TN", APP_TASK, "/TR", &command, "/RL", "LIMITED"]);
+        if result {
+            vec![
+                "[완료] QuietGuard 프로그램 자동 업데이트를 켰습니다.".into(),
+                "GitHub의 최신 정식 Release를 6시간마다 확인합니다.".into(),
+                "새 버전 발견 시 ZIP과 SHA-256을 내려받아 검증한 뒤 안전 교체를 시도합니다.".into(),
+                "업데이트 중 다른 QuietGuard 창이 실행 중이면 다음 예약 실행 때 다시 시도합니다.".into(),
+            ]
+        } else {
+            vec!["[오류] 프로그램 자동 업데이트 예약 작업을 만들지 못했습니다.".into(), "현재 사용자 권한에서 작업 스케줄러 등록이 허용되는지 확인이 필요합니다.".into()]
+        }
+    }
+}
+
 pub fn status_lines() -> Vec<String> {
     vec![
         format!("Windows 시작 시 QuietGuard: {}", startup_registration_status(STARTUP_VALUE, "")),
         format!("실시간 감시 자동 시작: {}", startup_registration_status(MONITOR_VALUE, "--watch")),
         format!("DB 주기 자동 업데이트: {} (고정 6시간 스케줄 / 소스별 고정 주기)", db_registration_status()),
+        format!("프로그램 자동 업데이트: {} (GitHub 정식 Release / 6시간 확인)", app_registration_status()),
         "DB 고정 주기: ThreatFox/URLhaus 6h · QuietGuard 규칙 확인 6h · 공개 PUP/도메인 24h · YousList 24h · ClamAV 24h".into(),
     ]
 }
@@ -72,11 +96,19 @@ pub fn monitor_autostart_enabled() -> bool {
 }
 
 pub fn db_autoupdate_enabled() -> bool {
+    task_matches(DB_TASK, "--update-data-silent")
+}
+
+pub fn app_autoupdate_enabled() -> bool {
+    task_matches(APP_TASK, "--self-update-silent")
+}
+
+fn task_matches(task: &str, arg: &str) -> bool {
     let Some(exe) = env::current_exe().ok() else { return false; };
-    let text = hidden_text("schtasks.exe", &["/Query", "/TN", DB_TASK, "/FO", "LIST", "/V"]);
+    let text = hidden_text("schtasks.exe", &["/Query", "/TN", task, "/FO", "LIST", "/V"]);
     if text.is_empty() { return false; }
     let lower = text.to_ascii_lowercase();
-    lower.contains(&exe.to_string_lossy().to_ascii_lowercase()) && lower.contains("--update-data-silent")
+    lower.contains(&exe.to_string_lossy().to_ascii_lowercase()) && lower.contains(&arg.to_ascii_lowercase())
 }
 
 fn startup_registration_status(name: &str, arg: &str) -> &'static str {
@@ -87,8 +119,16 @@ fn startup_registration_status(name: &str, arg: &str) -> &'static str {
 }
 
 fn db_registration_status() -> &'static str {
-    if db_autoupdate_enabled() { "켜짐" }
-    else if db_task_exists() { "등록 경로 불일치 (설정 버튼으로 복구 가능)" }
+    task_registration_status(DB_TASK, "--update-data-silent")
+}
+
+fn app_registration_status() -> &'static str {
+    task_registration_status(APP_TASK, "--self-update-silent")
+}
+
+fn task_registration_status(task: &str, arg: &str) -> &'static str {
+    if task_matches(task, arg) { "켜짐" }
+    else if task_exists(task) { "등록 경로 불일치 (설정 버튼으로 복구 가능)" }
     else { "꺼짐" }
 }
 
@@ -101,8 +141,8 @@ fn reg_value_matches(name: &str, expected: &str) -> bool {
     !text.is_empty() && text.to_ascii_lowercase().contains(&expected.to_ascii_lowercase())
 }
 
-fn db_task_exists() -> bool {
-    hidden_status("schtasks.exe", &["/Query", "/TN", DB_TASK])
+fn task_exists(task: &str) -> bool {
+    hidden_status("schtasks.exe", &["/Query", "/TN", task])
 }
 
 fn exe_command(arg: &str) -> Option<String> {
