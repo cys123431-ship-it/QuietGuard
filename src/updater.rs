@@ -9,27 +9,6 @@ const MANIFEST_URL: &str = "https://raw.githubusercontent.com/cys123431-ship-it/
 const RULES_URL: &str = "https://raw.githubusercontent.com/cys123431-ship-it/QuietGuard/main/rules/heuristics.conf";
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-pub fn spawn_background_update() -> String {
-    let exe = match env::current_exe() {
-        Ok(v) => v,
-        Err(e) => return format!("[정보] 자동 규칙 업데이트 시작 실패: {}", e),
-    };
-    let mut cmd = Command::new(exe);
-    cmd.arg("--update-rules-silent");
-    cmd.creation_flags(CREATE_NO_WINDOW);
-    match cmd.spawn() {
-        Ok(_) => "[정보] 규칙 DB 자동 업데이트 확인을 백그라운드에서 시작했습니다.".into(),
-        Err(e) => format!("[정보] 자동 규칙 업데이트 시작 실패: {}", e),
-    }
-}
-
-pub fn update_rules_silent() {
-    let lines = update_rules();
-    let dir = data_dir();
-    let _ = fs::create_dir_all(&dir);
-    let _ = fs::write(dir.join("update.log"), lines.join("\n") + "\n");
-}
-
 pub fn update_rules() -> Vec<String> {
     let mut out = Vec::with_capacity(14);
     out.push("QuietGuard 규칙 DB 업데이트 확인".to_string());
@@ -84,9 +63,7 @@ pub fn update_rules() -> Vec<String> {
 
     let local_version_path = dir.join("version.json");
     let local_rules_path = dir.join("heuristics.conf");
-    let local_version = fs::read_to_string(&local_version_path)
-        .ok()
-        .and_then(|s| json_string(&s, "rules_version"));
+    let local_version = fs::read_to_string(&local_version_path).ok().and_then(|s| json_string(&s, "rules_version"));
 
     if local_rules_path.exists() && local_version.as_deref() == Some(remote_version.as_str()) {
         match sha256_file(&local_rules_path) {
@@ -99,11 +76,7 @@ pub fn update_rules() -> Vec<String> {
         }
     }
 
-    out.push(format!(
-        "[정보] 규칙 DB {} -> {}",
-        local_version.as_deref().unwrap_or("초기/동봉"),
-        remote_version
-    ));
+    out.push(format!("[정보] 규칙 DB {} -> {}", local_version.as_deref().unwrap_or("초기/동봉"), remote_version));
 
     if let Err(e) = download(RULES_URL, &rules_tmp) {
         out.push(format!("[오류] 규칙 DB 다운로드 실패: {}", e));
@@ -146,18 +119,12 @@ pub fn update_rules() -> Vec<String> {
     out
 }
 
-pub fn local_rules_dir() -> PathBuf {
-    data_dir().join("rules")
-}
+pub fn local_rules_dir() -> PathBuf { data_dir().join("rules") }
 
 fn data_dir() -> PathBuf {
-    if let Ok(local) = env::var("LOCALAPPDATA") {
-        return PathBuf::from(local).join("QuietGuard");
-    }
+    if let Ok(local) = env::var("LOCALAPPDATA") { return PathBuf::from(local).join("QuietGuard"); }
     if let Ok(exe) = env::current_exe() {
-        if let Some(parent) = exe.parent() {
-            return parent.to_path_buf();
-        }
+        if let Some(parent) = exe.parent() { return parent.to_path_buf(); }
     }
     PathBuf::from("QuietGuardData")
 }
@@ -166,29 +133,22 @@ fn download(url: &str, destination: &Path) -> Result<(), String> {
     let dest = destination.to_string_lossy().to_string();
     let curl = hidden_output("curl.exe", &[
         "--fail", "--silent", "--show-error", "--location",
-        "--proto", "=https", "--tlsv1.2",
-        "--connect-timeout", "10", "--max-time", "30",
+        "--proto", "=https", "--tlsv1.2", "--connect-timeout", "10", "--max-time", "30",
         "--output", &dest, url,
     ]);
     if let Ok(output) = curl {
-        if output.status.success() && destination.exists() {
-            return Ok(());
-        }
+        if output.status.success() && destination.exists() { return Ok(()); }
     }
 
     let safe_url = url.replace('\'', "''");
     let safe_dest = dest.replace('\'', "''");
-    let script = format!(
-        "$ProgressPreference='SilentlyContinue'; Invoke-WebRequest -UseBasicParsing -Uri '{}' -OutFile '{}'",
-        safe_url, safe_dest
-    );
+    let script = format!("$ProgressPreference='SilentlyContinue'; Invoke-WebRequest -UseBasicParsing -TimeoutSec 45 -Uri '{}' -OutFile '{}'", safe_url, safe_dest);
     let output = hidden_output("powershell.exe", &[
         "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", &script,
     ]).map_err(|e| format!("curl/PowerShell 실행 실패: {}", e))?;
 
-    if output.status.success() && destination.exists() {
-        Ok(())
-    } else {
+    if output.status.success() && destination.exists() { Ok(()) }
+    else {
         let err = String::from_utf8_lossy(&output.stderr);
         Err(if err.trim().is_empty() { "HTTPS 다운로드 실패".into() } else { err.trim().into() })
     }
@@ -196,17 +156,12 @@ fn download(url: &str, destination: &Path) -> Result<(), String> {
 
 fn sha256_file(path: &Path) -> Result<String, String> {
     let p = path.to_string_lossy().to_string();
-    let output = hidden_output("certutil.exe", &["-hashfile", &p, "SHA256"])
-        .map_err(|e| format!("certutil 실행 실패: {}", e))?;
-    if !output.status.success() {
-        return Err("certutil이 해시를 계산하지 못했습니다.".into());
-    }
+    let output = hidden_output("certutil.exe", &["-hashfile", &p, "SHA256"]).map_err(|e| format!("certutil 실행 실패: {}", e))?;
+    if !output.status.success() { return Err("certutil이 해시를 계산하지 못했습니다.".into()); }
     let text = String::from_utf8_lossy(&output.stdout);
     for line in text.lines() {
         let candidate: String = line.chars().filter(|c| c.is_ascii_hexdigit()).collect();
-        if candidate.len() == 64 {
-            return Ok(candidate.to_ascii_lowercase());
-        }
+        if candidate.len() == 64 { return Ok(candidate.to_ascii_lowercase()); }
     }
     Err("SHA-256 결과를 해석하지 못했습니다.".into())
 }
@@ -220,10 +175,23 @@ fn hidden_output(program: &str, args: &[&str]) -> std::io::Result<Output> {
 
 fn install_verified(source: &Path, destination: &Path) -> std::io::Result<()> {
     let backup = destination.with_extension("bak");
-    if destination.exists() {
-        let _ = fs::copy(destination, &backup);
-        fs::remove_file(destination)?;
+    if backup.exists() { let _ = fs::remove_file(&backup); }
+
+    let had_destination = destination.exists();
+    if had_destination { move_file(destination, &backup)?; }
+
+    match move_file(source, destination) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            if had_destination && backup.exists() && !destination.exists() {
+                let _ = move_file(&backup, destination);
+            }
+            Err(error)
+        }
     }
+}
+
+fn move_file(source: &Path, destination: &Path) -> std::io::Result<()> {
     match fs::rename(source, destination) {
         Ok(()) => Ok(()),
         Err(_) => {
@@ -255,9 +223,7 @@ fn json_number(text: &str, key: &str) -> Option<u64> {
     digits.parse().ok()
 }
 
-fn version_lt(current: &str, minimum: &str) -> bool {
-    version_tuple(current) < version_tuple(minimum)
-}
+fn version_lt(current: &str, minimum: &str) -> bool { version_tuple(current) < version_tuple(minimum) }
 
 fn version_tuple(text: &str) -> (u64, u64, u64) {
     let mut parts = text.split('.').map(|p| p.chars().take_while(|c| c.is_ascii_digit()).collect::<String>().parse::<u64>().unwrap_or(0));
