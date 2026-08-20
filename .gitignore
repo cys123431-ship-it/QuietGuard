@@ -2,3 +2,5 @@
 *.pdb
 *.log
 .DS_Store
+secrets.conf
+config/secrets.conf
