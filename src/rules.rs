@@ -54,9 +54,18 @@ impl Rules {
             let line = raw.trim();
             if line.is_empty() || line.starts_with('#') { continue; }
             let Some((key, value)) = line.split_once('=') else { continue; };
-            let value = value.trim().to_ascii_lowercase();
+            let key = key.trim();
+            let mut value = value.trim().to_ascii_lowercase();
             if value.is_empty() { continue; }
-            match key.trim() {
+
+            // Older QuietGuard rule files wrote doubled backslashes literally.
+            // Accept both old and normal Windows path separators so a rule such as
+            // \\users\\public\\ still matches C:\Users\Public\... as intended.
+            if key == "suspicious_path" {
+                value = collapse_legacy_backslashes(&value);
+            }
+
+            match key {
                 "suspicious_path" => push_unique(&mut self.suspicious_paths, value),
                 "suspicious_command" => push_unique(&mut self.suspicious_commands, value),
                 "script_extension" => push_unique(&mut self.script_extensions, value),
@@ -81,6 +90,20 @@ impl Rules {
     }
 }
 
+fn collapse_legacy_backslashes(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    let mut chars = value.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\\' && chars.peek() == Some(&'\\') {
+            out.push('\\');
+            let _ = chars.next();
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
 fn push_unique(items: &mut Vec<String>, value: String) {
     if !items.iter().any(|x| x.eq_ignore_ascii_case(&value)) {
         items.push(value);
@@ -90,20 +113,35 @@ fn push_unique(items: &mut Vec<String>, value: String) {
 fn candidate_paths() -> Vec<PathBuf> {
     let mut paths = Vec::new();
 
-    // Updated rules live in a writable per-user directory so QuietGuard does
-    // not need administrator rights even when installed under Program Files.
     if let Ok(local) = std::env::var("LOCALAPPDATA") {
         paths.push(PathBuf::from(local).join("QuietGuard").join("rules").join("heuristics.conf"));
     }
 
-    // Portable/bundled fallback next to the executable.
     if let Ok(exe) = std::env::current_exe() {
         if let Some(parent) = exe.parent() {
             paths.push(parent.join("rules").join("heuristics.conf"));
         }
     }
 
-    // Developer checkout fallback.
     paths.push(Path::new("rules").join("heuristics.conf"));
     paths
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_doubled_path_rule_matches_normal_windows_path() {
+        let mut rules = Rules::default();
+        rules.apply_text("suspicious_path=\\\\users\\\\public\\\\\n");
+        assert!(rules.path_is_suspicious(r"C:\Users\Public\payload.exe"));
+    }
+
+    #[test]
+    fn normal_path_rule_is_kept_compatible() {
+        let mut rules = Rules::default();
+        rules.apply_text("suspicious_path=\\users\\public\\\n");
+        assert!(rules.path_is_suspicious(r"C:\Users\Public\payload.exe"));
+    }
 }
