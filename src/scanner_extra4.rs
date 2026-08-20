@@ -1,4 +1,5 @@
 use crate::rules::Rules;
+use std::cmp::Ordering;
 use std::env;
 use std::fs;
 use std::os::windows::process::CommandExt;
@@ -44,20 +45,14 @@ fn decode_output(bytes: &[u8]) -> String {
 
 fn scan_fake_system_processes(out: &mut Vec<String>) {
     let script = r#"$names=@('svchost.exe','lsass.exe','csrss.exe','winlogon.exe','services.exe','smss.exe','wininit.exe','spoolsv.exe','taskhostw.exe','dllhost.exe','conhost.exe'); Get-CimInstance Win32_Process | Where-Object { $names -contains $_.Name } | ForEach-Object { Write-Output ($_.Name + '|' + $_.ExecutablePath) }"#;
-    let text = hidden_output("powershell.exe", &[
-        "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script,
-    ]);
-    if text.is_empty() {
-        out.push("[정보] 핵심 시스템 프로세스 경로를 조회하지 못했습니다.".into());
-        return;
-    }
+    let text = hidden_output("powershell.exe", &["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script]);
+    if text.is_empty() { out.push("[정보] 핵심 시스템 프로세스 경로를 조회하지 못했습니다.".into()); return; }
 
     let windir = env::var("WINDIR").unwrap_or_else(|_| "C:\\Windows".into()).to_ascii_lowercase();
     let system32 = format!("{}\\system32\\", windir.trim_end_matches('\\'));
     let syswow64 = format!("{}\\syswow64\\", windir.trim_end_matches('\\'));
     let mut checked = 0usize;
     let mut suspicious = 0usize;
-
     for line in text.lines().map(str::trim).filter(|l| !l.is_empty()) {
         let Some((name, path)) = line.split_once('|') else { continue; };
         let path = path.trim();
@@ -89,9 +84,7 @@ fn scan_numeric_system_files(out: &mut Vec<String>) {
             let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else { continue; };
             if (stem.len() == 4 || stem.len() == 12) && stem.chars().all(|c| c.is_ascii_digit()) {
                 matches += 1;
-                if matches <= 30 {
-                    out.push(format!("[확인] {} 숫자형 실행 가능 파일: {}", label, path.display()));
-                }
+                if matches <= 30 { out.push(format!("[확인] {} 숫자형 실행 가능 파일: {}", label, path.display())); }
             }
         }
     }
@@ -101,16 +94,10 @@ fn scan_numeric_system_files(out: &mut Vec<String>) {
 fn scan_group_policy_registry(out: &mut Vec<String>, rules: &Rules) {
     let windir = env::var("WINDIR").unwrap_or_else(|_| "C:\\Windows".into());
     let base = PathBuf::from(&windir).join("System32");
-    let mut files = vec![
-        base.join("GroupPolicy\\Machine\\Registry.pol"),
-        base.join("GroupPolicy\\User\\Registry.pol"),
-    ];
-
+    let mut files = vec![base.join("GroupPolicy\\Machine\\Registry.pol"), base.join("GroupPolicy\\User\\Registry.pol")];
     let users = base.join("GroupPolicyUsers");
     if let Ok(items) = fs::read_dir(users) {
-        for item in items.flatten() {
-            files.push(item.path().join("User\\Registry.pol"));
-        }
+        for item in items.flatten() { files.push(item.path().join("User\\Registry.pol")); }
     }
 
     let mut existing = 0usize;
@@ -121,9 +108,7 @@ fn scan_group_policy_registry(out: &mut Vec<String>, rules: &Rules) {
         let text = decode_registry_pol(&bytes).to_ascii_lowercase();
         let mut hits = Vec::new();
         for token in rules.suspicious_commands.iter().chain(rules.suspicious_paths.iter()) {
-            if text.contains(token) && !hits.iter().any(|x: &&String| x.eq_ignore_ascii_case(token)) {
-                hits.push(token);
-            }
+            if text.contains(token) && !hits.iter().any(|x: &&String| x.eq_ignore_ascii_case(token)) { hits.push(token); }
         }
         if !hits.is_empty() {
             suspicious_files += 1;
@@ -136,9 +121,7 @@ fn scan_group_policy_registry(out: &mut Vec<String>, rules: &Rules) {
 
 fn decode_registry_pol(bytes: &[u8]) -> String {
     let body = if bytes.len() > 4 { &bytes[4..] } else { bytes };
-    let u16s: Vec<u16> = body.chunks_exact(2)
-        .map(|c| u16::from_le_bytes([c[0], c[1]]))
-        .collect();
+    let u16s: Vec<u16> = body.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
     String::from_utf16_lossy(&u16s)
 }
 
@@ -173,15 +156,9 @@ fn scan_extension_metadata(out: &mut Vec<String>) {
                 let Some(manifest) = newest_manifest(&ext.path()) else { continue; };
                 let Ok(text) = fs::read_to_string(manifest) else { continue; };
                 let name = json_string(&text, "name").unwrap_or_else(|| "(이름 확인 불가)".into());
-                if text.contains("\"background\"") {
-                    background += 1;
-                }
+                if text.contains("\"background\"") { background += 1; }
                 if let Some(url) = json_string(&text, "update_url") {
-                    let lower = url.to_ascii_lowercase();
-                    let official = lower.contains("google.com/service/update2/crx")
-                        || lower.contains("edge.microsoft.com/extensionwebstorebase")
-                        || lower.contains("clients2.google.com/service/update2/crx");
-                    if !official {
+                    if !official_extension_update_url(&url) {
                         external_update += 1;
                         out.push(format!("[확인] {} 확장 외부 update_url: {} ({})", browser, compact(&name, 55), compact(&url, 100)));
                     }
@@ -189,21 +166,38 @@ fn scan_extension_metadata(out: &mut Vec<String>) {
             }
         }
     }
-    out.push(format!(
-        "[정보] Chromium 확장 {}개 메타데이터 확인 / 비표준 ID {} / 외부 update_url {} / background 선언 {}",
-        total, unusual_id, external_update, background
-    ));
+    out.push(format!("[정보] Chromium 확장 {}개 메타데이터 확인 / 비표준 ID {} / 외부 update_url {} / background 선언 {}",
+        total, unusual_id, external_update, background));
+}
+
+fn official_extension_update_url(url: &str) -> bool {
+    let lower = url.trim().to_ascii_lowercase();
+    let Some(rest) = lower.strip_prefix("https://") else { return false; };
+    let (authority, path) = rest.split_once('/').unwrap_or((rest, ""));
+    let host_port = authority.rsplit('@').next().unwrap_or(authority);
+    let host = host_port.split(':').next().unwrap_or(host_port);
+    match host {
+        "clients2.google.com" => path.starts_with("service/update2/crx"),
+        "edge.microsoft.com" => path.starts_with("extensionwebstorebase"),
+        _ => false,
+    }
 }
 
 fn newest_manifest(extension_dir: &Path) -> Option<PathBuf> {
     let items = fs::read_dir(extension_dir).ok()?;
     let mut dirs: Vec<PathBuf> = items.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect();
-    dirs.sort_by(|a, b| b.file_name().cmp(&a.file_name()));
+    dirs.sort_by(|a, b| compare_version_names(a.file_name().and_then(|s| s.to_str()).unwrap_or(""), b.file_name().and_then(|s| s.to_str()).unwrap_or("")).reverse());
     for dir in dirs {
         let manifest = dir.join("manifest.json");
         if manifest.exists() { return Some(manifest); }
     }
     None
+}
+
+fn compare_version_names(a: &str, b: &str) -> Ordering {
+    let pa: Vec<u64> = a.split('.').map(|p| p.chars().take_while(|c| c.is_ascii_digit()).collect::<String>().parse().unwrap_or(0)).collect();
+    let pb: Vec<u64> = b.split('.').map(|p| p.chars().take_while(|c| c.is_ascii_digit()).collect::<String>().parse().unwrap_or(0)).collect();
+    pa.cmp(&pb).then_with(|| a.cmp(b))
 }
 
 fn valid_chromium_extension_id(id: &str) -> bool {
@@ -219,24 +213,17 @@ fn json_string(text: &str, key: &str) -> Option<String> {
     let mut value = String::new();
     let mut escaped = false;
     for ch in after.chars() {
-        if escaped {
-            value.push(ch);
-            escaped = false;
-        } else if ch == '\\' {
-            escaped = true;
-        } else if ch == '"' {
-            return Some(value);
-        } else {
-            value.push(ch);
-        }
+        if escaped { value.push(ch); escaped = false; }
+        else if ch == '\\' { escaped = true; }
+        else if ch == '"' { return Some(value); }
+        else { value.push(ch); }
     }
     None
 }
 
 fn is_exec_like(path: &Path) -> bool {
     let Some(ext) = path.extension().and_then(|e| e.to_str()) else { return false; };
-    matches!(ext.to_ascii_lowercase().as_str(),
-        "exe" | "dll" | "sys" | "scr" | "com" | "bat" | "cmd" | "vbs" | "js" | "ps1" | "hta")
+    matches!(ext.to_ascii_lowercase().as_str(), "exe" | "dll" | "sys" | "scr" | "com" | "bat" | "cmd" | "vbs" | "js" | "ps1" | "hta")
 }
 
 fn compact(text: &str, max_chars: usize) -> String {
@@ -245,4 +232,22 @@ fn compact(text: &str, max_chars: usize) -> String {
     let mut s: String = flat.chars().take(max_chars.saturating_sub(3)).collect();
     s.push_str("...");
     s
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_lookalike_google_update_hosts() {
+        assert!(official_extension_update_url("https://clients2.google.com/service/update2/crx"));
+        assert!(official_extension_update_url("https://edge.microsoft.com/extensionwebstorebase/v1/crx"));
+        assert!(!official_extension_update_url("https://evilgoogle.com/service/update2/crx"));
+        assert!(!official_extension_update_url("http://clients2.google.com/service/update2/crx"));
+    }
+
+    #[test]
+    fn version_comparison_is_numeric() {
+        assert_eq!(compare_version_names("10.0.0", "9.99.99"), Ordering::Greater);
+    }
 }

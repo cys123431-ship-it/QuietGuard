@@ -1,10 +1,12 @@
 use std::collections::BTreeSet;
 use std::env;
 use std::fs;
+use std::io::{self, Read};
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::process::{Command, Output, Stdio};
+use std::thread;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 const UPDATE_INTERVAL_SECS: u64 = 24 * 60 * 60;
@@ -30,8 +32,12 @@ pub fn scan_candidates() -> Vec<String> {
     for path in candidates.iter().take(24) { cmd.arg(path); }
     cmd.creation_flags(CREATE_NO_WINDOW);
 
-    let result = match cmd.output() {
+    let result = match output_with_timeout(cmd, Duration::from_secs(90)) {
         Ok(v) => v,
+        Err(e) if e.kind() == io::ErrorKind::TimedOut => {
+            out.push("[경고] ClamAV 보조 검사가 90초 제한을 넘어 중단되었습니다.".into());
+            return out;
+        }
         Err(e) => {
             out.push(format!("[경고] ClamAV 실행 실패: {}", e));
             return out;
@@ -78,7 +84,7 @@ pub fn update_if_present(force: bool) -> Vec<String> {
     let mut cmd = Command::new(&freshclam);
     cmd.arg("--quiet");
     cmd.creation_flags(CREATE_NO_WINDOW);
-    match cmd.output() {
+    match output_with_timeout(cmd, Duration::from_secs(120)) {
         Ok(result) if result.status.success() => {
             let _ = fs::create_dir_all(data_dir());
             let _ = fs::write(data_dir().join("clamav-last-update.txt"), format!("{}\n", unix_now()));
@@ -90,6 +96,9 @@ pub fn update_if_present(force: bool) -> Vec<String> {
             let detail = if !err.trim().is_empty() { err } else { stdout };
             out.push(format!("[정보] FreshClam 업데이트를 완료하지 못했습니다: {}", compact(detail.trim(), 180)));
             out.push("QuietGuard 자체/공개 DB 업데이트에는 영향이 없습니다.".into());
+        }
+        Err(e) if e.kind() == io::ErrorKind::TimedOut => {
+            out.push("[정보] FreshClam 업데이트가 120초 제한을 넘어 중단되었습니다. 다음 주기에 다시 시도합니다.".into());
         }
         Err(e) => out.push(format!("[정보] FreshClam 실행 실패: {}", e)),
     }
@@ -119,7 +128,7 @@ fn collect_candidates() -> Vec<PathBuf> {
         for line in text.lines() {
             if !(line.contains("REG_SZ") || line.contains("REG_EXPAND_SZ")) { continue; }
             if let Some(value) = registry_tail(line) {
-                if let Some(path) = extract_existing_file(value) { set.insert(path); }
+                for path in extract_existing_files(value) { set.insert(path); }
             }
         }
     }
@@ -146,26 +155,36 @@ fn startup_dirs() -> Vec<PathBuf> {
     out
 }
 
-fn extract_existing_file(command: &str) -> Option<PathBuf> {
+fn extract_existing_files(command: &str) -> Vec<PathBuf> {
     let expanded = expand_env(command.trim());
     let text = expanded.trim();
-    let first = if let Some(rest) = text.strip_prefix('"') {
-        &rest[..rest.find('"')?]
-    } else {
-        text.split_whitespace().next()?
-    };
-    let candidate = normalize_nt(PathBuf::from(first.trim_matches('"')));
-    if candidate.is_file() { return Some(candidate); }
+    let mut out = BTreeSet::new();
+
+    if let Some(first) = first_command_path(text) {
+        let candidate = normalize_nt(PathBuf::from(first));
+        if candidate.is_file() { out.insert(candidate); }
+    }
 
     let lower = text.to_ascii_lowercase();
     for ext in [".exe", ".dll", ".sys", ".scr", ".com", ".bat", ".cmd", ".ps1", ".vbs", ".js"] {
-        if let Some(pos) = lower.find(ext) {
-            let end = pos + ext.len();
-            let path = normalize_nt(PathBuf::from(text[..end].trim_matches('"')));
-            if path.is_file() { return Some(path); }
+        let mut offset = 0usize;
+        while let Some(pos) = lower[offset..].find(ext) {
+            let end = offset + pos + ext.len();
+            let prefix = &text[..end];
+            let start = prefix.rfind('"').map(|p| p + 1)
+                .or_else(|| prefix.rfind(|c: char| c.is_whitespace()).map(|p| p + 1)).unwrap_or(0);
+            let candidate = normalize_nt(PathBuf::from(prefix[start..].trim_matches('"')));
+            if candidate.is_file() { out.insert(candidate); }
+            offset = end;
+            if offset >= lower.len() { break; }
         }
     }
-    None
+    out.into_iter().collect()
+}
+
+fn first_command_path(text: &str) -> Option<&str> {
+    if let Some(rest) = text.strip_prefix('"') { return Some(&rest[..rest.find('"')?]); }
+    text.split_whitespace().next()
 }
 
 fn registry_tail(line: &str) -> Option<&str> {
@@ -250,6 +269,27 @@ fn hidden_output(program: &str, args: &[&str]) -> std::io::Result<Output> {
     cmd.args(args);
     cmd.creation_flags(CREATE_NO_WINDOW);
     cmd.output()
+}
+
+fn output_with_timeout(mut cmd: Command, timeout: Duration) -> std::io::Result<Output> {
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = cmd.spawn()?;
+    let started = Instant::now();
+    loop {
+        if let Some(status) = child.try_wait()? {
+            let mut stdout = Vec::new();
+            let mut stderr = Vec::new();
+            if let Some(mut pipe) = child.stdout.take() { pipe.read_to_end(&mut stdout)?; }
+            if let Some(mut pipe) = child.stderr.take() { pipe.read_to_end(&mut stderr)?; }
+            return Ok(Output { status, stdout, stderr });
+        }
+        if started.elapsed() >= timeout {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(io::Error::new(io::ErrorKind::TimedOut, "process timeout"));
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
 }
 
 fn decode_output(bytes: &[u8]) -> String {

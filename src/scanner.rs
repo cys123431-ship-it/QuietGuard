@@ -1,13 +1,16 @@
 use crate::rules::Rules;
 use std::env;
 use std::fs;
+use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 pub fn run_quick_scan() -> Vec<String> {
     let rules = Rules::load();
     let mut out = Vec::with_capacity(64);
-    out.push("QuietGuard 0.2 시스템 점검 시작".to_string());
+    out.push(format!("QuietGuard {} 시스템 점검 시작", env!("CARGO_PKG_VERSION")));
 
     scan_hosts(&mut out);
     scan_proxy(&mut out);
@@ -23,21 +26,20 @@ pub fn run_quick_scan() -> Vec<String> {
 }
 
 fn command_output(program: &str, args: &[&str]) -> String {
-    match Command::new(program).args(args).output() {
+    let mut cmd = Command::new(program);
+    cmd.args(args);
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    match cmd.output() {
         Ok(o) => {
             let bytes = o.stdout;
             if bytes.starts_with(&[0xFF, 0xFE]) {
-                let u16s: Vec<u16> = bytes[2..]
-                    .chunks_exact(2)
-                    .map(|c| u16::from_le_bytes([c[0], c[1]]))
-                    .collect();
+                let u16s: Vec<u16> = bytes[2..].chunks_exact(2)
+                    .map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
                 return String::from_utf16_lossy(&u16s);
             }
             if bytes.starts_with(&[0xFE, 0xFF]) {
-                let u16s: Vec<u16> = bytes[2..]
-                    .chunks_exact(2)
-                    .map(|c| u16::from_be_bytes([c[0], c[1]]))
-                    .collect();
+                let u16s: Vec<u16> = bytes[2..].chunks_exact(2)
+                    .map(|c| u16::from_be_bytes([c[0], c[1]])).collect();
                 return String::from_utf16_lossy(&u16s);
             }
             String::from_utf8_lossy(&bytes).into_owned()
@@ -51,18 +53,14 @@ fn scan_hosts(out: &mut Vec<String>) {
     let hosts = format!("{}\\System32\\drivers\\etc\\hosts", windir);
     match fs::read_to_string(&hosts) {
         Ok(content) => {
-            let entries: Vec<&str> = content.lines()
-                .map(str::trim)
+            let entries: Vec<&str> = content.lines().map(str::trim)
                 .filter(|l| !l.is_empty() && !l.starts_with('#'))
-                .filter(|l| !is_default_hosts_entry(l))
-                .collect();
+                .filter(|l| !is_default_hosts_entry(l)).collect();
             if entries.is_empty() {
                 out.push("[정상] Hosts: 특이 항목 없음".into());
             } else {
                 out.push(format!("[주의] Hosts: 사용자 정의 항목 {}개", entries.len()));
-                for item in entries.iter().take(4) {
-                    out.push(format!("  - {}", item));
-                }
+                for item in entries.iter().take(4) { out.push(format!("  - {}", item)); }
             }
         }
         Err(_) => out.push("[정보] Hosts: 파일을 읽지 못함".into()),
@@ -87,13 +85,8 @@ fn scan_proxy(out: &mut Vec<String>) {
 }
 
 fn scan_dns(out: &mut Vec<String>) {
-    let text = command_output("reg", &[
-        "query",
-        "HKLM\\SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters\\Interfaces",
-        "/s", "/v", "NameServer"
-    ]);
-    let values: Vec<&str> = text.lines()
-        .map(str::trim)
+    let text = command_output("reg", &["query", "HKLM\\SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters\\Interfaces", "/s", "/v", "NameServer"]);
+    let values: Vec<&str> = text.lines().map(str::trim)
         .filter(|l| l.to_ascii_lowercase().contains("nameserver") && !l.ends_with("REG_SZ"))
         .collect();
     if values.is_empty() {
@@ -122,9 +115,7 @@ fn scan_registry_autoruns(out: &mut Vec<String>, rules: &Rules) {
         let text = command_output("reg", &["query", key]);
         if text.is_empty() { continue; }
         for line in text.lines().map(str::trim) {
-            if !(line.contains("REG_SZ") || line.contains("REG_EXPAND_SZ") || line.contains("REG_MULTI_SZ")) {
-                continue;
-            }
+            if !(line.contains("REG_SZ") || line.contains("REG_EXPAND_SZ") || line.contains("REG_MULTI_SZ")) { continue; }
             let lower = line.to_ascii_lowercase();
             let relevant = if label.contains("Command Processor") {
                 lower.contains("autorun")
@@ -132,9 +123,7 @@ fn scan_registry_autoruns(out: &mut Vec<String>, rules: &Rules) {
                 lower.contains("shell") || lower.contains("userinit") || lower.contains("notify")
             } else if label == "Windows AppInit" {
                 lower.contains("appinit_dlls") || lower.contains("loadappinit_dlls")
-            } else {
-                true
-            };
+            } else { true };
             if !relevant { continue; }
             total += 1;
             if rules.autorun_is_suspicious(line) {
@@ -148,12 +137,8 @@ fn scan_registry_autoruns(out: &mut Vec<String>, rules: &Rules) {
 
 fn scan_startup_folders(out: &mut Vec<String>, rules: &Rules) {
     let mut dirs = Vec::new();
-    if let Ok(appdata) = env::var("APPDATA") {
-        dirs.push(PathBuf::from(appdata).join("Microsoft\\Windows\\Start Menu\\Programs\\Startup"));
-    }
-    if let Ok(programdata) = env::var("ProgramData") {
-        dirs.push(PathBuf::from(programdata).join("Microsoft\\Windows\\Start Menu\\Programs\\StartUp"));
-    }
+    if let Ok(appdata) = env::var("APPDATA") { dirs.push(PathBuf::from(appdata).join("Microsoft\\Windows\\Start Menu\\Programs\\Startup")); }
+    if let Ok(programdata) = env::var("ProgramData") { dirs.push(PathBuf::from(programdata).join("Microsoft\\Windows\\Start Menu\\Programs\\StartUp")); }
 
     let mut total = 0usize;
     let mut suspicious = 0usize;
@@ -173,13 +158,8 @@ fn scan_startup_folders(out: &mut Vec<String>, rules: &Rules) {
 }
 
 fn scan_services(out: &mut Vec<String>, rules: &Rules) {
-    let text = command_output("reg", &[
-        "query", "HKLM\\SYSTEM\\CurrentControlSet\\Services", "/s", "/v", "ImagePath"
-    ]);
-    if text.is_empty() {
-        out.push("[정보] 서비스 ImagePath를 읽지 못함".into());
-        return;
-    }
+    let text = command_output("reg", &["query", "HKLM\\SYSTEM\\CurrentControlSet\\Services", "/s", "/v", "ImagePath"]);
+    if text.is_empty() { out.push("[정보] 서비스 ImagePath를 읽지 못함".into()); return; }
     let mut total = 0usize;
     let mut suspicious = 0usize;
     for line in text.lines().map(str::trim) {
@@ -196,10 +176,7 @@ fn scan_services(out: &mut Vec<String>, rules: &Rules) {
 
 fn scan_scheduled_tasks(out: &mut Vec<String>, rules: &Rules) {
     let text = command_output("schtasks", &["/query", "/fo", "csv", "/v"]);
-    if text.is_empty() {
-        out.push("[정보] 예약 작업 목록을 읽지 못함".into());
-        return;
-    }
+    if text.is_empty() { out.push("[정보] 예약 작업 목록을 읽지 못함".into()); return; }
     let mut total = 0usize;
     let mut suspicious = 0usize;
     for line in text.lines() {
@@ -219,7 +196,6 @@ fn scan_browser_extensions(out: &mut Vec<String>) {
     let mut chrome = 0usize;
     let mut edge = 0usize;
     let mut firefox = 0usize;
-
     if let Ok(local) = env::var("LOCALAPPDATA") {
         let local = PathBuf::from(local);
         chrome = count_chromium_extensions(&local.join("Google\\Chrome\\User Data"));
@@ -228,7 +204,6 @@ fn scan_browser_extensions(out: &mut Vec<String>) {
     if let Ok(roaming) = env::var("APPDATA") {
         firefox = count_firefox_extensions(&PathBuf::from(roaming).join("Mozilla\\Firefox\\Profiles"));
     }
-
     out.push(format!("[정보] 브라우저 확장: Chrome {} / Edge {} / Firefox {}", chrome, edge, firefox));
 
     let policy_keys = [
@@ -240,9 +215,7 @@ fn scan_browser_extensions(out: &mut Vec<String>) {
     for (label, key) in policy_keys {
         let text = command_output("reg", &["query", key]);
         let count = text.lines().filter(|l| l.contains("REG_SZ")).count();
-        if count > 0 {
-            out.push(format!("[확인] {} 강제 설치 확장 정책 {}개", label, count));
-        }
+        if count > 0 { out.push(format!("[확인] {} 강제 설치 확장 정책 {}개", label, count)); }
     }
 }
 
@@ -276,17 +249,12 @@ fn has_script_extension(path: &Path, rules: &Rules) -> bool {
 }
 
 fn registry_value_tail(text: &str) -> Option<&str> {
-    text.lines()
-        .map(str::trim)
+    text.lines().map(str::trim)
         .find(|l| l.contains("REG_SZ") || l.contains("REG_EXPAND_SZ"))
         .and_then(|l| {
-            if let Some((_, tail)) = l.split_once("REG_EXPAND_SZ") {
-                Some(tail.trim())
-            } else if let Some((_, tail)) = l.split_once("REG_SZ") {
-                Some(tail.trim())
-            } else {
-                None
-            }
+            if let Some((_, tail)) = l.split_once("REG_EXPAND_SZ") { Some(tail.trim()) }
+            else if let Some((_, tail)) = l.split_once("REG_SZ") { Some(tail.trim()) }
+            else { None }
         })
 }
 

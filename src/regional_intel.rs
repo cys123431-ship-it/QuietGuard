@@ -35,7 +35,7 @@ pub fn update(force: bool) -> Vec<String> {
     match build_index(&raw, &tmp) {
         Ok(count) => {
             if let Err(e) = replace_file(&tmp, &final_path) {
-                out.push(format!("[경고] YousList 적용 실패: {}", e));
+                out.push(format!("[경고] YousList 적용 실패: {} (기존 DB 자동 복구 시도)", e));
             } else {
                 let _ = fs::write(dir.join("last-update.txt"), format!("{}\n", unix_now()));
                 out.push(format!("[완료] YousList {}개 도메인 (한국 광고 참고/저신뢰)", count));
@@ -63,7 +63,7 @@ pub fn status_line() -> String {
     let path = regional_dir().join("youslist.f64");
     match fs::metadata(path) {
         Ok(meta) => format!("[DB] YousList: {}개 / 한국 광고 참고 (저신뢰)", meta.len() / RECORD_LEN),
-        Err(_) => "[DB] YousList: 아직 없음 (자동 업데이트 예정)".into(),
+        Err(_) => "[DB] YousList: 아직 없음 (DB 업데이트 시 생성)".into(),
     }
 }
 
@@ -156,8 +156,24 @@ fn hidden_output(program: &str, args: &[&str]) -> std::io::Result<Output> {
 }
 
 fn replace_file(source: &Path, destination: &Path) -> std::io::Result<()> {
-    if destination.exists() { let _ = fs::copy(destination, destination.with_extension("f64.bak")); fs::remove_file(destination)?; }
-    fs::rename(source, destination).or_else(|_| { fs::copy(source, destination)?; fs::remove_file(source) })
+    let backup = destination.with_extension("f64.bak");
+    if backup.exists() { let _ = fs::remove_file(&backup); }
+    let had_destination = destination.exists();
+    if had_destination { move_file(destination, &backup)?; }
+    match move_file(source, destination) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            if had_destination && backup.exists() && !destination.exists() { let _ = move_file(&backup, destination); }
+            Err(error)
+        }
+    }
+}
+
+fn move_file(source: &Path, destination: &Path) -> std::io::Result<()> {
+    match fs::rename(source, destination) {
+        Ok(()) => Ok(()),
+        Err(_) => { fs::copy(source, destination)?; fs::remove_file(source)?; Ok(()) }
+    }
 }
 
 fn regional_dir() -> PathBuf { data_dir().join("intel").join("regional") }

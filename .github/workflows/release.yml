@@ -11,11 +11,11 @@ permissions:
   contents: write
 
 jobs:
-  release-v1-5-0:
+  release-v1-5-1:
     runs-on: windows-latest
     env:
-      RELEASE_TAG: v1.5.0
-      RELEASE_TARGET: 2ed3c6601a49b4e76f4fe856f04165ea47158f2c
+      RELEASE_TAG: v1.5.1
+      RELEASE_TARGET: ${{ github.sha }}
     steps:
       - name: Checkout release target
         uses: actions/checkout@v4
@@ -29,19 +29,22 @@ jobs:
       - name: Validate
         run: cargo check --release
 
+      - name: Test
+        run: cargo test --release
+
       - name: Build
         run: cargo build --release
 
       - name: Prepare release package
         shell: pwsh
         run: |
-          $dir = 'dist/QuietGuard-v1.5.0-windows-x64'
+          $dir = 'dist/QuietGuard-v1.5.1-windows-x64'
           New-Item -ItemType Directory -Force -Path "$dir/rules" | Out-Null
           Copy-Item target/release/quietguard.exe "$dir/QuietGuard.exe"
           Copy-Item rules/heuristics.conf "$dir/rules/heuristics.conf"
           Copy-Item rules/version.json "$dir/rules/version.json"
-          Compress-Archive -Path "$dir/*" -DestinationPath 'dist/QuietGuard-v1.5.0-windows-x64.zip' -Force
-          (Get-FileHash 'dist/QuietGuard-v1.5.0-windows-x64.zip' -Algorithm SHA256).Hash.ToLower() | Set-Content 'dist/QuietGuard-v1.5.0-windows-x64.zip.sha256'
+          Compress-Archive -Path "$dir/*" -DestinationPath 'dist/QuietGuard-v1.5.1-windows-x64.zip' -Force
+          (Get-FileHash 'dist/QuietGuard-v1.5.1-windows-x64.zip' -Algorithm SHA256).Hash.ToLower() | Set-Content 'dist/QuietGuard-v1.5.1-windows-x64.zip.sha256'
 
       - name: Create GitHub release
         shell: pwsh
@@ -49,23 +52,28 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $notes = @"
-          QuietGuard v1.5.0
+          QuietGuard v1.5.1
 
-          Automation and responsiveness release.
+          Repository-wide hardening release.
 
           Changes:
-          - Add opt-in Windows startup toggle
-          - Add opt-in real-time monitor autostart toggle
-          - Add opt-in scheduled DB update toggle
-          - Keep all new automation disabled until the user explicitly enables each setting
-          - Run manual DB updates outside the GUI thread to prevent Windows 'Not Responding' during network/parsing work
-          - Prevent overlapping DB refreshes with a named Windows mutex
-          - Avoid duplicate successful ThreatFox refreshes; compatibility retry runs only after primary failure
-          - Add a bounded ThreatFox compatibility request timeout
-          - Preserve abuse.ch Auth-Key configuration and low-memory disk indexes
+          - Retry registration for monitored registry keys that are created after the watcher starts
+          - Validate Windows startup, monitor autostart and scheduled DB task paths against the current executable
+          - Run system scans and baseline save/compare outside the GUI thread
+          - Suppress helper console windows in core scan modules
+          - Add baseline schema/version metadata, previous-baseline backup and volatile DB-status filtering
+          - Fix external heuristic path separator compatibility
+          - Validate Chromium extension update URLs by exact HTTPS host and compare extension versions numerically
+          - Track public and abuse.ch refresh times per source so failed feeds retry independently
+          - Add rollback-safe replacement for rule and domain index files
+          - Add bounded HTTP requests and bounded optional ClamAV/FreshClam helper execution
+          - Improve ClamAV indirect candidate extraction
+          - Ignore local secrets.conf files in Git
+          - Add Windows cargo test execution to CI and release validation
+          - Keep all detection read-only; no automatic deletion or quarantine
 
-          DB cadence when scheduled updates are enabled:
-          - ThreatFox/URLhaus: 6 hours
+          Scheduled cadence remains:
+          - ThreatFox/URLhaus: 6 hours per source
           - Public PUP/domain feeds and YousList: 24 hours
           - ClamAV update check: 24 hours when installed
 
@@ -74,7 +82,7 @@ jobs:
 
           gh release view $env:RELEASE_TAG *> $null
           if ($LASTEXITCODE -eq 0) {
-            gh release upload $env:RELEASE_TAG 'dist/QuietGuard-v1.5.0-windows-x64.zip' 'dist/QuietGuard-v1.5.0-windows-x64.zip.sha256' --clobber
+            gh release upload $env:RELEASE_TAG 'dist/QuietGuard-v1.5.1-windows-x64.zip' 'dist/QuietGuard-v1.5.1-windows-x64.zip.sha256' --clobber
           } else {
-            gh release create $env:RELEASE_TAG 'dist/QuietGuard-v1.5.0-windows-x64.zip' 'dist/QuietGuard-v1.5.0-windows-x64.zip.sha256' --target $env:RELEASE_TARGET --title 'QuietGuard v1.5.0' --notes $notes
+            gh release create $env:RELEASE_TAG 'dist/QuietGuard-v1.5.1-windows-x64.zip' 'dist/QuietGuard-v1.5.1-windows-x64.zip.sha256' --target $env:RELEASE_TARGET --title 'QuietGuard v1.5.1' --notes $notes
           }

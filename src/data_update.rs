@@ -54,7 +54,7 @@ pub fn update_all(force_public_intel: bool) -> Vec<String> {
         match update_threatfox_compat(force_public_intel) {
             Ok(Some(count)) => {
                 keyed.retain(|line| !line.starts_with("[경고] ThreatFox 업데이트 실패:"));
-                keyed.push(format!("[완료] ThreatFox 최근 IOC 도메인 {}개", count));
+                keyed.push(format!("[완료] ThreatFox 최근 IOC 도메인 {}개 (호환 경로)", count));
                 keyed.retain(|line| !line.starts_with("[DB] ThreatFox:"));
                 keyed.push(format!("[DB] ThreatFox: {}개 / recent malware IOC / payload delivery / C2", count));
             }
@@ -71,20 +71,6 @@ pub fn update_all(force_public_intel: bool) -> Vec<String> {
     out.push(String::new());
     out.extend(crate::clam_bridge::update_if_present(force_public_intel));
     out
-}
-
-pub fn spawn_background_update() -> String {
-    let exe = match env::current_exe() {
-        Ok(v) => v,
-        Err(e) => return format!("[정보] 자동 DB 업데이트 시작 실패: {}", e),
-    };
-    let mut cmd = Command::new(exe);
-    cmd.arg("--update-data-silent");
-    cmd.creation_flags(CREATE_NO_WINDOW);
-    match cmd.spawn() {
-        Ok(_) => "[정보] QuietGuard DB 업데이트 확인을 백그라운드에서 시작했습니다.".into(),
-        Err(e) => format!("[정보] 자동 DB 업데이트 시작 실패: {}", e),
-    }
 }
 
 pub fn update_silent() {
@@ -145,6 +131,7 @@ fn update_threatfox_compat(force: bool) -> Result<Option<usize>, String> {
 
     let count = install_threatfox_domains(&domains)?;
     let _ = fs::write(keyed_dir().join("threatfox-last-update.txt"), format!("{}\n", unix_now()));
+    let _ = fs::write(keyed_dir().join("last-update.txt"), format!("{}\n", unix_now()));
     let _ = fs::remove_dir_all(&raw_dir);
     Ok(Some(count))
 }
@@ -173,16 +160,29 @@ fn install_threatfox_domains(domains: &[String]) -> Result<usize, String> {
     let mut file = File::create(&temp).map_err(|e| e.to_string())?;
     for hash in &hashes { writeln!(file, "{:016x}", hash).map_err(|e| e.to_string())?; }
     file.flush().map_err(|e| e.to_string())?;
-
-    if final_path.exists() {
-        let _ = fs::copy(&final_path, keyed_dir().join("threatfox.f64.bak"));
-        fs::remove_file(&final_path).map_err(|e| e.to_string())?;
-    }
-    fs::rename(&temp, &final_path).or_else(|_| {
-        fs::copy(&temp, &final_path)?;
-        fs::remove_file(&temp)
-    }).map_err(|e| e.to_string())?;
+    replace_file(&temp, &final_path).map_err(|e| e.to_string())?;
     Ok(hashes.len())
+}
+
+fn replace_file(source: &Path, destination: &Path) -> std::io::Result<()> {
+    let backup = destination.with_extension("f64.bak");
+    if backup.exists() { let _ = fs::remove_file(&backup); }
+    let had_destination = destination.exists();
+    if had_destination { move_file(destination, &backup)?; }
+    match move_file(source, destination) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            if had_destination && backup.exists() && !destination.exists() { let _ = move_file(&backup, destination); }
+            Err(error)
+        }
+    }
+}
+
+fn move_file(source: &Path, destination: &Path) -> std::io::Result<()> {
+    match fs::rename(source, destination) {
+        Ok(()) => Ok(()),
+        Err(_) => { fs::copy(source, destination)?; fs::remove_file(source)?; Ok(()) }
+    }
 }
 
 fn abusech_key() -> Option<String> {
@@ -209,7 +209,9 @@ fn valid_key(value: &str) -> bool {
 
 fn threatfox_due() -> bool {
     let path = keyed_dir().join("threatfox-last-update.txt");
-    let Some(ts) = fs::read_to_string(path).ok().and_then(|s| s.trim().parse::<u64>().ok()) else { return true; };
+    let ts = fs::read_to_string(&path).ok().and_then(|s| s.trim().parse::<u64>().ok())
+        .or_else(|| fs::read_to_string(keyed_dir().join("last-update.txt")).ok().and_then(|s| s.trim().parse::<u64>().ok()));
+    let Some(ts) = ts else { return true; };
     unix_now().saturating_sub(ts) >= THREATFOX_INTERVAL_SECS
 }
 
@@ -280,17 +282,10 @@ fn binary_search_hash(path: &Path, target: u64) -> std::io::Result<bool> {
 }
 
 fn keyed_dir() -> PathBuf { data_dir().join("intel").join("keyed") }
-
 fn data_dir() -> PathBuf {
-    if let Ok(local) = env::var("LOCALAPPDATA") {
-        return PathBuf::from(local).join("QuietGuard");
-    }
+    if let Ok(local) = env::var("LOCALAPPDATA") { return PathBuf::from(local).join("QuietGuard"); }
     PathBuf::from("QuietGuardData")
 }
-
-fn unix_now() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
-}
-
+fn unix_now() -> u64 { SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0) }
 fn wide(s: &str) -> Vec<u16> { s.encode_utf16().chain(std::iter::once(0)).collect() }
 fn ps_quote(text: &str) -> String { text.replace('\'', "''") }

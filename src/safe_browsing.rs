@@ -45,7 +45,7 @@ pub fn scan_opt_in() -> Vec<String> {
     let input_ps = ps_quote(&input.to_string_lossy());
     let response_ps = ps_quote(&response.to_string_lossy());
     let script = format!(
-        "$ErrorActionPreference='Stop';$u=Get-Content -LiteralPath '{}';$p=@();foreach($x in $u){{if($x){{$p+=('urls='+[uri]::EscapeDataString($x))}}}};$uri='https://safebrowsing.googleapis.com/v5/urls:search?key='+[uri]::EscapeDataString($env:QUIETGUARD_GSB_KEY)+'&'+($p -join '&');Invoke-WebRequest -UseBasicParsing -Headers @{{'Accept'='application/json'}} -Uri $uri -OutFile '{}';",
+        "$ErrorActionPreference='Stop';$u=Get-Content -LiteralPath '{}';$p=@();foreach($x in $u){{if($x){{$p+=('urls='+[uri]::EscapeDataString($x))}}}};$uri='https://safebrowsing.googleapis.com/v5/urls:search?key='+[uri]::EscapeDataString($env:QUIETGUARD_GSB_KEY)+'&'+($p -join '&');Invoke-WebRequest -UseBasicParsing -TimeoutSec 45 -Headers @{{'Accept'='application/json'}} -Uri $uri -OutFile '{}';",
         input_ps, response_ps
     );
     let mut cmd = Command::new("powershell.exe");
@@ -115,9 +115,7 @@ fn collect_candidate_urls() -> Vec<String> {
         "HKCU\\Software\\Policies\\Microsoft\\Edge",
         "HKLM\\Software\\Policies\\Microsoft\\Edge",
     ];
-    for key in REG_KEYS {
-        harvest_urls(&hidden_text("reg.exe", &["query", key, "/s"]), &mut set);
-    }
+    for key in REG_KEYS { harvest_urls(&hidden_text("reg.exe", &["query", key, "/s"]), &mut set); }
     harvest_urls(&hidden_text("schtasks.exe", &["/query", "/fo", "LIST", "/v"]), &mut set);
 
     if let Ok(local) = env::var("LOCALAPPDATA") {
@@ -147,8 +145,7 @@ fn harvest_urls(text: &str, set: &mut BTreeSet<String>) {
         while let Some(pos) = text[offset..].find(scheme) {
             let start = offset + pos;
             let rest = &text[start..];
-            let end = rest.find(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | ')' | ']' | '}' | ',' | '\\'))
-                .unwrap_or(rest.len());
+            let end = rest.find(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | ')' | ']' | '}' | ',' | '\\')).unwrap_or(rest.len());
             if end > scheme.len() {
                 let value = rest[..end].trim_end_matches(|c: char| matches!(c, '.' | ';')).to_string();
                 if value.len() <= 2048 { set.insert(value); }
@@ -197,6 +194,7 @@ fn hidden_text(program: &str, args: &[&str]) -> String {
     cmd.creation_flags(CREATE_NO_WINDOW);
     cmd.output().map(|o| decode_output(&o.stdout)).unwrap_or_default()
 }
+
 fn decode_output(bytes: &[u8]) -> String {
     if bytes.starts_with(&[0xFF, 0xFE]) {
         let u16s: Vec<u16> = bytes[2..].chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
@@ -204,6 +202,7 @@ fn decode_output(bytes: &[u8]) -> String {
     }
     String::from_utf8_lossy(bytes).into_owned()
 }
+
 fn truthy(v: &str) -> bool { matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on") }
 fn valid_key(v: &str) -> bool { v.len() >= 16 && v.len() <= 512 && !v.chars().any(char::is_whitespace) }
 fn ps_quote(v: &str) -> String { v.replace('\'', "''") }
