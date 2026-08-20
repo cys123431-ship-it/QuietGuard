@@ -40,6 +40,8 @@ mod monitor;
 mod baseline;
 #[cfg(target_os = "windows")]
 mod automation;
+#[cfg(target_os = "windows")]
+mod self_update;
 
 #[cfg(not(target_os = "windows"))]
 fn main() { println!("QuietGuard targets Windows 10/11."); }
@@ -113,6 +115,7 @@ mod app {
     const ID_STARTUP_TOGGLE: usize = 1008;
     const ID_MONITOR_AUTO_TOGGLE: usize = 1009;
     const ID_DB_AUTO_TOGGLE: usize = 1010;
+    const ID_APP_AUTO_TOGGLE: usize = 1011;
 
     static mut LISTBOX: HWND = null_mut();
     static UPDATE_RUNNING: AtomicBool = AtomicBool::new(false);
@@ -229,6 +232,7 @@ mod app {
             ID_STARTUP_TOGGLE => show_automation_result(crate::automation::toggle_windows_startup()),
             ID_MONITOR_AUTO_TOGGLE => show_automation_result(crate::automation::toggle_monitor_autostart()),
             ID_DB_AUTO_TOGGLE => show_automation_result(crate::automation::toggle_db_autoupdate()),
+            ID_APP_AUTO_TOGGLE => show_automation_result(crate::automation::toggle_app_autoupdate()),
             _ => {}
         }
     }
@@ -283,10 +287,11 @@ mod app {
             make_button(hwnd, instance, 300, 62, 160, ID_STARTUP_TOGGLE, "윈도우 자동실행 설정");
             make_button(hwnd, instance, 470, 62, 160, ID_MONITOR_AUTO_TOGGLE, "감시 자동시작 설정");
             make_button(hwnd, instance, 640, 62, 170, ID_DB_AUTO_TOGGLE, "DB 자동업데이트 설정");
+            make_button(hwnd, instance, 820, 62, 175, ID_APP_AUTO_TOGGLE, "앱 자동업데이트 설정");
             let listbox = wide("LISTBOX");
             LISTBOX = CreateWindowExW(0, listbox.as_ptr(), null(), WS_CHILD | WS_VISIBLE | WS_BORDER | WS_VSCROLL | LBS_NOINTEGRALHEIGHT,
                 20, 112, 980, 490, hwnd, null_mut(), instance, null_mut());
-            add_line(&format!("QuietGuard {} 준비됨 - 자동 실행/자동 감시/자동 DB 업데이트는 각 설정 버튼으로 제어합니다.", env!("CARGO_PKG_VERSION")));
+            add_line(&format!("QuietGuard {} 준비됨 - 자동 실행/감시/DB/앱 업데이트는 각 설정 버튼으로 제어합니다.", env!("CARGO_PKG_VERSION")));
             add_line("Defender를 대체하지 않으며 PUP/광고프로그램/하이재킹 및 시스템 변조 흔적에 집중합니다.");
             add_line(&crate::keyed_intel::abusech_config_status());
             add_line(&crate::safe_browsing::status_line());
@@ -307,7 +312,9 @@ mod app {
 #[cfg(target_os = "windows")]
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    if args.iter().any(|arg| arg == "--watch") { monitor::run_watcher(); }
+    if args.iter().any(|arg| arg == "--apply-update") { self_update::apply_update(&args); }
+    else if args.iter().any(|arg| arg == "--self-update-silent") { self_update::update_silent(); }
+    else if args.iter().any(|arg| arg == "--watch") { monitor::run_watcher(); }
     else if args.iter().any(|arg| arg == "--update-data-silent" || arg == "--update-rules-silent") { data_update::update_silent(); }
     else { app::run(); }
 }
