@@ -24,6 +24,7 @@ const KEY_NOTIFY: u32 = 0x0010;
 const REG_NOTIFY_CHANGE_NAME: u32 = 0x0000_0001;
 const REG_NOTIFY_CHANGE_LAST_SET: u32 = 0x0000_0004;
 const WATCH_TIMEOUT_MS: u32 = 5_000;
+const RECHECK_MISSING_EVERY_TICKS: u32 = 6;
 
 const HKEY_CURRENT_USER: HKEY = (0x8000_0001u32 as i32 as isize) as HKEY;
 const HKEY_LOCAL_MACHINE: HKEY = (0x8000_0002u32 as i32 as isize) as HKEY;
@@ -92,42 +93,39 @@ pub fn run_watcher() {
         if stop_event.is_null() { CloseHandle(mutex); return; }
 
         let mut watches = Vec::with_capacity(32);
-        add_reg_watch(&mut watches, "사용자 시작프로그램 Run", HKEY_CURRENT_USER, "Software\\Microsoft\\Windows\\CurrentVersion\\Run", false);
-        add_reg_watch(&mut watches, "사용자 시작프로그램 RunOnce", HKEY_CURRENT_USER, "Software\\Microsoft\\Windows\\CurrentVersion\\RunOnce", false);
-        add_reg_watch(&mut watches, "Windows 프록시/PAC", HKEY_CURRENT_USER, "Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings", false);
-        add_reg_watch(&mut watches, "사용자 Command Processor", HKEY_CURRENT_USER, "Software\\Microsoft\\Command Processor", false);
-        add_reg_watch(&mut watches, "시스템 시작프로그램 Run", HKEY_LOCAL_MACHINE, "Software\\Microsoft\\Windows\\CurrentVersion\\Run", false);
-        add_reg_watch(&mut watches, "시스템 시작프로그램 RunOnce", HKEY_LOCAL_MACHINE, "Software\\Microsoft\\Windows\\CurrentVersion\\RunOnce", false);
-        add_reg_watch(&mut watches, "시스템 Command Processor", HKEY_LOCAL_MACHINE, "Software\\Microsoft\\Command Processor", false);
-        add_reg_watch(&mut watches, "Winlogon", HKEY_LOCAL_MACHINE, "Software\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon", false);
-        add_reg_watch(&mut watches, "서비스/드라이버", HKEY_LOCAL_MACHINE, "SYSTEM\\CurrentControlSet\\Services", true);
-        add_reg_watch(&mut watches, "SafeBoot", HKEY_LOCAL_MACHINE, "SYSTEM\\CurrentControlSet\\Control\\SafeBoot", true);
-        add_reg_watch(&mut watches, "Windows 방화벽 규칙", HKEY_LOCAL_MACHINE, "SYSTEM\\CurrentControlSet\\Services\\SharedAccess\\Parameters\\FirewallPolicy\\FirewallRules", false);
-        add_reg_watch(&mut watches, "사용자 App Paths", HKEY_CURRENT_USER, "Software\\Microsoft\\Windows\\CurrentVersion\\App Paths", true);
-        add_reg_watch(&mut watches, "시스템 App Paths", HKEY_LOCAL_MACHINE, "Software\\Microsoft\\Windows\\CurrentVersion\\App Paths", true);
-        add_reg_watch(&mut watches, "사용자 Explorer 정책", HKEY_CURRENT_USER, "Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer", true);
-        add_reg_watch(&mut watches, "시스템 Explorer 정책", HKEY_LOCAL_MACHINE, "Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer", true);
-        add_reg_watch(&mut watches, "Software Restriction Policy", HKEY_LOCAL_MACHINE, "Software\\Policies\\Microsoft\\Windows\\Safer", true);
-        add_reg_watch(&mut watches, "IE SearchScopes", HKEY_CURRENT_USER, "Software\\Microsoft\\Internet Explorer\\SearchScopes", true);
-        add_reg_watch(&mut watches, "사용자 MozillaPlugins", HKEY_CURRENT_USER, "Software\\MozillaPlugins", true);
-        add_reg_watch(&mut watches, "시스템 MozillaPlugins", HKEY_LOCAL_MACHINE, "Software\\MozillaPlugins", true);
-        add_reg_watch(&mut watches, "Chrome 사용자 정책", HKEY_CURRENT_USER, "Software\\Policies\\Google\\Chrome", true);
-        add_reg_watch(&mut watches, "Chrome 시스템 정책", HKEY_LOCAL_MACHINE, "Software\\Policies\\Google\\Chrome", true);
-        add_reg_watch(&mut watches, "Edge 사용자 정책", HKEY_CURRENT_USER, "Software\\Policies\\Microsoft\\Edge", true);
-        add_reg_watch(&mut watches, "Edge 시스템 정책", HKEY_LOCAL_MACHINE, "Software\\Policies\\Microsoft\\Edge", true);
+        ensure_all_reg_watches(&mut watches);
 
         let mut file_watches = build_file_watches();
         write_log(&format!("[watcher] 시작 - 레지스트리 감시 {}개 / 파일 위치 {}개", watches.len(), file_watches.len()));
         write_state(true, watches.len(), file_watches.len());
-        let mut handles = Vec::with_capacity(watches.len() + 1);
-        handles.push(stop_event);
-        for w in &watches { handles.push(w.event); }
+
+        let mut handles: Vec<HANDLE> = Vec::with_capacity(40);
+        let mut recheck_ticks = 0u32;
 
         loop {
+            handles.clear();
+            handles.push(stop_event);
+            handles.extend(watches.iter().map(|w| w.event));
+
             let result = WaitForMultipleObjects(handles.len() as u32, handles.as_ptr(), 0, WATCH_TIMEOUT_MS);
             if result == WAIT_OBJECT_0 { write_log("[watcher] 중지 신호 수신"); break; }
-            if result == WAIT_TIMEOUT { poll_files(&mut file_watches); continue; }
             if result == WAIT_FAILED { write_log("[watcher] WaitForMultipleObjects 실패"); break; }
+
+            if result == WAIT_TIMEOUT {
+                poll_files(&mut file_watches);
+                recheck_ticks = recheck_ticks.saturating_add(1);
+                if recheck_ticks >= RECHECK_MISSING_EVERY_TICKS {
+                    recheck_ticks = 0;
+                    let before = watches.len();
+                    ensure_all_reg_watches(&mut watches);
+                    if watches.len() > before {
+                        write_log(&format!("[watcher] 새로 생성된 레지스트리 감시 지점 {}개 추가", watches.len() - before));
+                        write_state(true, watches.len(), file_watches.len());
+                    }
+                }
+                continue;
+            }
+
             let index = result.saturating_sub(WAIT_OBJECT_0) as usize;
             if index >= 1 && index <= watches.len() {
                 let watch = &watches[index - 1];
@@ -142,6 +140,37 @@ pub fn run_watcher() {
         write_state(false, 0, 0);
         write_log("[watcher] 종료");
     }
+}
+
+unsafe fn ensure_all_reg_watches(watches: &mut Vec<RegWatch>) {
+    ensure_reg_watch(watches, "사용자 시작프로그램 Run", HKEY_CURRENT_USER, "Software\\Microsoft\\Windows\\CurrentVersion\\Run", false);
+    ensure_reg_watch(watches, "사용자 시작프로그램 RunOnce", HKEY_CURRENT_USER, "Software\\Microsoft\\Windows\\CurrentVersion\\RunOnce", false);
+    ensure_reg_watch(watches, "Windows 프록시/PAC", HKEY_CURRENT_USER, "Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings", false);
+    ensure_reg_watch(watches, "사용자 Command Processor", HKEY_CURRENT_USER, "Software\\Microsoft\\Command Processor", false);
+    ensure_reg_watch(watches, "시스템 시작프로그램 Run", HKEY_LOCAL_MACHINE, "Software\\Microsoft\\Windows\\CurrentVersion\\Run", false);
+    ensure_reg_watch(watches, "시스템 시작프로그램 RunOnce", HKEY_LOCAL_MACHINE, "Software\\Microsoft\\Windows\\CurrentVersion\\RunOnce", false);
+    ensure_reg_watch(watches, "시스템 Command Processor", HKEY_LOCAL_MACHINE, "Software\\Microsoft\\Command Processor", false);
+    ensure_reg_watch(watches, "Winlogon", HKEY_LOCAL_MACHINE, "Software\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon", false);
+    ensure_reg_watch(watches, "서비스/드라이버", HKEY_LOCAL_MACHINE, "SYSTEM\\CurrentControlSet\\Services", true);
+    ensure_reg_watch(watches, "SafeBoot", HKEY_LOCAL_MACHINE, "SYSTEM\\CurrentControlSet\\Control\\SafeBoot", true);
+    ensure_reg_watch(watches, "Windows 방화벽 규칙", HKEY_LOCAL_MACHINE, "SYSTEM\\CurrentControlSet\\Services\\SharedAccess\\Parameters\\FirewallPolicy\\FirewallRules", false);
+    ensure_reg_watch(watches, "사용자 App Paths", HKEY_CURRENT_USER, "Software\\Microsoft\\Windows\\CurrentVersion\\App Paths", true);
+    ensure_reg_watch(watches, "시스템 App Paths", HKEY_LOCAL_MACHINE, "Software\\Microsoft\\Windows\\CurrentVersion\\App Paths", true);
+    ensure_reg_watch(watches, "사용자 Explorer 정책", HKEY_CURRENT_USER, "Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer", true);
+    ensure_reg_watch(watches, "시스템 Explorer 정책", HKEY_LOCAL_MACHINE, "Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer", true);
+    ensure_reg_watch(watches, "Software Restriction Policy", HKEY_LOCAL_MACHINE, "Software\\Policies\\Microsoft\\Windows\\Safer", true);
+    ensure_reg_watch(watches, "IE SearchScopes", HKEY_CURRENT_USER, "Software\\Microsoft\\Internet Explorer\\SearchScopes", true);
+    ensure_reg_watch(watches, "사용자 MozillaPlugins", HKEY_CURRENT_USER, "Software\\MozillaPlugins", true);
+    ensure_reg_watch(watches, "시스템 MozillaPlugins", HKEY_LOCAL_MACHINE, "Software\\MozillaPlugins", true);
+    ensure_reg_watch(watches, "Chrome 사용자 정책", HKEY_CURRENT_USER, "Software\\Policies\\Google\\Chrome", true);
+    ensure_reg_watch(watches, "Chrome 시스템 정책", HKEY_LOCAL_MACHINE, "Software\\Policies\\Google\\Chrome", true);
+    ensure_reg_watch(watches, "Edge 사용자 정책", HKEY_CURRENT_USER, "Software\\Policies\\Microsoft\\Edge", true);
+    ensure_reg_watch(watches, "Edge 시스템 정책", HKEY_LOCAL_MACHINE, "Software\\Policies\\Microsoft\\Edge", true);
+}
+
+unsafe fn ensure_reg_watch(watches: &mut Vec<RegWatch>, label: &'static str, root: HKEY, subkey: &str, subtree: bool) {
+    if watches.iter().any(|w| w.label == label) { return; }
+    add_reg_watch(watches, label, root, subkey, subtree);
 }
 
 unsafe fn add_reg_watch(watches: &mut Vec<RegWatch>, label: &'static str, root: HKEY, subkey: &str, subtree: bool) {
@@ -170,10 +199,50 @@ fn build_file_watches() -> Vec<FileWatch> {
     watches
 }
 
-fn add_file_watch(watches: &mut Vec<FileWatch>, label: &'static str, path: PathBuf) { let stamp = modified_stamp(&path); watches.push(FileWatch { label, path, stamp }); }
-fn poll_files(watches: &mut [FileWatch]) { for watch in watches { let now = modified_stamp(&watch.path); if now != watch.stamp { write_log(&format!("[변경] 파일/폴더: {} ({})", watch.label, watch.path.display())); watch.stamp = now; } } }
-fn modified_stamp(path: &PathBuf) -> Option<u128> { fs::metadata(path).ok()?.modified().ok()?.duration_since(UNIX_EPOCH).ok().map(|d| d.as_millis()) }
-fn data_dir() -> PathBuf { if let Ok(local) = env::var("LOCALAPPDATA") { return PathBuf::from(local).join("QuietGuard"); } PathBuf::from("QuietGuardData") }
-fn write_log(message: &str) { let dir = data_dir(); let _ = fs::create_dir_all(&dir); let path = dir.join("events.log"); let ts = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0); if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) { let _ = writeln!(file, "{} {}", ts, message); } }
-fn write_state(running: bool, registry_count: usize, file_count: usize) { let dir = data_dir(); let _ = fs::create_dir_all(&dir); let path = dir.join("watcher.state"); let body = if running { format!("running=1\nregistry_watches={}\nfile_watches={}\n", registry_count, file_count) } else { "running=0\n".to_string() }; let _ = fs::write(path, body); }
+fn add_file_watch(watches: &mut Vec<FileWatch>, label: &'static str, path: PathBuf) {
+    let stamp = modified_stamp(&path);
+    watches.push(FileWatch { label, path, stamp });
+}
+
+fn poll_files(watches: &mut [FileWatch]) {
+    for watch in watches {
+        let now = modified_stamp(&watch.path);
+        if now != watch.stamp {
+            write_log(&format!("[변경] 파일/폴더: {} ({})", watch.label, watch.path.display()));
+            watch.stamp = now;
+        }
+    }
+}
+
+fn modified_stamp(path: &PathBuf) -> Option<u128> {
+    fs::metadata(path).ok()?.modified().ok()?.duration_since(UNIX_EPOCH).ok().map(|d| d.as_millis())
+}
+
+fn data_dir() -> PathBuf {
+    if let Ok(local) = env::var("LOCALAPPDATA") { return PathBuf::from(local).join("QuietGuard"); }
+    PathBuf::from("QuietGuardData")
+}
+
+fn write_log(message: &str) {
+    let dir = data_dir();
+    let _ = fs::create_dir_all(&dir);
+    let path = dir.join("events.log");
+    let ts = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
+        let _ = writeln!(file, "{} {}", ts, message);
+    }
+}
+
+fn write_state(running: bool, registry_count: usize, file_count: usize) {
+    let dir = data_dir();
+    let _ = fs::create_dir_all(&dir);
+    let path = dir.join("watcher.state");
+    let body = if running {
+        format!("running=1\nregistry_watches={}\nfile_watches={}\n", registry_count, file_count)
+    } else {
+        "running=0\n".to_string()
+    };
+    let _ = fs::write(path, body);
+}
+
 fn wide(s: &str) -> Vec<u16> { s.encode_utf16().chain(std::iter::once(0)).collect() }
