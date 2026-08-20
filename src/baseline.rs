@@ -2,9 +2,12 @@ use std::collections::BTreeSet;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+const BASELINE_SCHEMA: u32 = 2;
 
 pub fn save_baseline() -> Vec<String> {
-    let mut out = Vec::with_capacity(8);
+    let mut out = Vec::with_capacity(10);
     out.push("QuietGuard 기준 상태 저장".into());
     let normalized = normalize(&collect_scan_lines());
     let path = baseline_path();
@@ -14,12 +17,30 @@ pub fn save_baseline() -> Vec<String> {
             return out;
         }
     }
-    let body = normalized.iter().cloned().collect::<Vec<_>>().join("\n") + "\n";
+
+    if path.exists() {
+        let backup = baseline_backup_path();
+        let _ = fs::copy(&path, &backup);
+    }
+
+    let mut body = String::new();
+    body.push_str(&format!("# quietguard_baseline_schema={}\n", BASELINE_SCHEMA));
+    body.push_str(&format!("# app_version={}\n", env!("CARGO_PKG_VERSION")));
+    body.push_str(&format!("# created_unix={}\n", unix_now()));
+    body.push_str("# comparison_only=1\n");
+    for line in &normalized {
+        body.push_str(line);
+        body.push('\n');
+    }
+
     match fs::write(&path, body) {
         Ok(()) => {
             out.push(format!("[완료] 기준 항목 {}개 저장", normalized.len()));
             out.push(format!("위치: {}", path.display()));
-            out.push("이 기준은 사용자가 현재 PC 상태를 정상으로 확인한 뒤 저장하는 용도입니다.".into());
+            if baseline_backup_path().exists() {
+                out.push(format!("이전 기준 백업: {}", baseline_backup_path().display()));
+            }
+            out.push("이 파일은 변화 비교용 스냅샷일 뿐 정상/악성 승인이나 탐지 예외로 사용되지 않습니다.".into());
         }
         Err(e) => out.push(format!("[오류] 기준 상태 저장 실패: {}", e)),
     }
@@ -37,8 +58,20 @@ pub fn compare_baseline() -> Vec<String> {
             return out;
         }
     };
+
+    let schema = baseline_text.lines()
+        .find_map(|line| line.strip_prefix("# quietguard_baseline_schema="))
+        .and_then(|v| v.trim().parse::<u32>().ok());
+    if let Some(schema) = schema {
+        if schema > BASELINE_SCHEMA {
+            out.push(format!("[정보] 현재 프로그램보다 새로운 기준 파일 형식(schema {})입니다. 비교를 중단합니다.", schema));
+            return out;
+        }
+    }
+
     let baseline: BTreeSet<String> = baseline_text.lines().map(str::trim)
-        .filter(|l| !l.is_empty()).map(ToOwned::to_owned).collect();
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .map(ToOwned::to_owned).collect();
     let current = normalize(&collect_scan_lines());
     let added: Vec<&String> = current.difference(&baseline).collect();
     let removed: Vec<&String> = baseline.difference(&current).collect();
@@ -87,7 +120,10 @@ fn normalize(lines: &[String]) -> BTreeSet<String> {
         .filter(|s| !s.starts_with("QuietGuard "))
         .filter(|s| !s.starts_with("점검 완료"))
         .filter(|s| !s.starts_with("---"))
+        .filter(|s| !s.starts_with("[DB] "))
+        .filter(|s| !s.starts_with("[최신] "))
         .filter(|s| !s.starts_with("[정보] 공개 DB 마지막 갱신:"))
+        .filter(|s| !s.contains("도메인 DB가 아직 없습니다"))
         .map(ToOwned::to_owned).collect()
 }
 
@@ -97,3 +133,5 @@ fn data_dir() -> PathBuf {
 }
 
 fn baseline_path() -> PathBuf { data_dir().join("baseline.txt") }
+fn baseline_backup_path() -> PathBuf { data_dir().join("baseline.prev.txt") }
+fn unix_now() -> u64 { SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0) }
